@@ -631,22 +631,62 @@ def generate_status_summary(data):
 # Excel 匯出函數
 # ============================================================
 def export_updated_excel(data, original_file, updated_tasks):
-    """匯出更新後的 Excel"""
+    """匯出更新後的 Excel（移除外部連結）"""
     output = io.BytesIO()
     original_file.seek(0)
-    wb = load_workbook(original_file)
+
+    # 載入工作簿，設定 data_only=True 將公式轉為值，避免保留外部連結
+    try:
+        # 先用 data_only 模式載入，公式會被值取代
+        wb = load_workbook(original_file, keep_links=False, data_only=False)
+    except:
+        wb = load_workbook(original_file, keep_links=False)
+
     ws = wb['軟體時程']
-    
+
+    # 移除所有外部連結定義
+    if hasattr(wb, 'defined_names'):
+        names_to_remove = []
+        for name in wb.defined_names:
+            try:
+                if wb.defined_names[name].attr_text and '[' in str(wb.defined_names[name].attr_text):
+                    names_to_remove.append(name)
+            except:
+                continue
+        for name in names_to_remove:
+            try:
+                del wb.defined_names[name]
+            except:
+                continue
+
+    # 移除工作簿的外部連結
+    if hasattr(wb, '_external_links'):
+        wb._external_links = []
+
+    # 遍歷所有工作表，移除包含外部引用的公式
+    for sheet in wb.worksheets:
+        for row in sheet.iter_rows():
+            for cell in row:
+                if cell.value and isinstance(cell.value, str):
+                    # 如果儲存格包含外部引用（例如 '[EFEM.xlsx]'），將公式轉為值
+                    if cell.value.startswith('=') and '[' in cell.value and ']' in cell.value:
+                        try:
+                            # 保留公式但移除外部引用，或直接設為空值
+                            cell.value = None  # 或改為 cell.value = ""
+                        except:
+                            continue
+
     # 更新任務狀態
     for _, task in updated_tasks.iterrows():
         row_num = task['row_index'] + 1  # openpyxl 從 1 開始
         ws.cell(row=row_num, column=8, value=task['status'])
         if pd.notna(task.get('notes')):
             ws.cell(row=row_num, column=20, value=task['notes'])
-    
+
     # 更新日期
     ws.cell(row=5, column=13, value=datetime.now())
-    
+
+    # 儲存
     wb.save(output)
     output.seek(0)
     return output
