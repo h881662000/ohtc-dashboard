@@ -224,58 +224,67 @@ def load_excel_data(uploaded_file):
 def create_gantt_chart(df_tasks, show_actual=False):
     """建立甘特圖"""
     gantt_data = df_tasks[df_tasks['plan_start'].notna() & df_tasks['plan_end'].notna()].copy()
-    
+
     if gantt_data.empty:
         return None
-    
+
     color_map = {
         'Done': '#28a745',
-        'Going': '#ffc107', 
+        'Going': '#ffc107',
         'Delay': '#dc3545',
         '': '#6c757d'
     }
-    
+
     fig = go.Figure()
-    
+
     # 計劃時程
     for idx, row in gantt_data.iterrows():
-        fig.add_trace(go.Bar(
-            name='計劃',
-            y=[row['task']],
-            x=[(row['plan_end'] - row['plan_start']).days],
-            base=row['plan_start'],
-            orientation='h',
-            marker_color=color_map.get(row['status'], '#6c757d'),
-            opacity=0.8,
-            hovertemplate=f"<b>{row['task']}</b><br>" +
-                         f"計劃: {row['plan_start'].strftime('%Y-%m-%d')} ~ {row['plan_end'].strftime('%Y-%m-%d')}<br>" +
-                         f"狀態: {row['status']}<br>" +
-                         f"負責: {row['owner']}<extra></extra>",
-            showlegend=False,
-        ))
-    
+        try:
+            # 確保日期是 datetime 類型
+            plan_start = pd.to_datetime(row['plan_start'])
+            plan_end = pd.to_datetime(row['plan_end'])
+
+            fig.add_trace(go.Bar(
+                name='計劃',
+                y=[row['task']],
+                x=[(plan_end - plan_start).days],
+                base=plan_start,
+                orientation='h',
+                marker_color=color_map.get(row['status'], '#6c757d'),
+                opacity=0.8,
+                hovertemplate=f"<b>{row['task']}</b><br>" +
+                             f"計劃: {plan_start.strftime('%Y-%m-%d')} ~ {plan_end.strftime('%Y-%m-%d')}<br>" +
+                             f"狀態: {row['status']}<br>" +
+                             f"負責: {row['owner']}<extra></extra>",
+                showlegend=False,
+            ))
+        except Exception as e:
+            continue  # 跳過有問題的資料
+
     # 實際時程（如果有）
     if show_actual:
         actual_data = gantt_data[gantt_data['actual_start'].notna() & gantt_data['actual_end'].notna()]
         for idx, row in actual_data.iterrows():
-            fig.add_trace(go.Bar(
-                name='實際',
-                y=[row['task']],
-                x=[(row['actual_end'] - row['actual_start']).days],
-                base=row['actual_start'],
-                orientation='h',
-                marker_color='rgba(0,0,0,0.3)',
-                marker_line_color='black',
-                marker_line_width=2,
-                opacity=0.5,
-                showlegend=False,
-            ))
-    
-    # 今日線
-    today = datetime.now()
-    fig.add_vline(x=today, line_dash="dash", line_color="red", 
-                  annotation_text="今日", annotation_position="top")
-    
+            try:
+                actual_start = pd.to_datetime(row['actual_start'])
+                actual_end = pd.to_datetime(row['actual_end'])
+
+                fig.add_trace(go.Bar(
+                    name='實際',
+                    y=[row['task']],
+                    x=[(actual_end - actual_start).days],
+                    base=actual_start,
+                    orientation='h',
+                    marker_color='rgba(0,0,0,0.3)',
+                    marker_line_color='black',
+                    marker_line_width=2,
+                    opacity=0.5,
+                    showlegend=False,
+                ))
+            except Exception as e:
+                continue
+
+    # 設定版面配置
     fig.update_layout(
         title='📅 專案甘特圖',
         height=max(500, len(gantt_data) * 28),
@@ -285,15 +294,43 @@ def create_gantt_chart(df_tasks, show_actual=False):
         yaxis={'categoryorder': 'total ascending'},
         xaxis={'type': 'date'},
     )
-    
+
+    # 加入今日線（使用 add_shape 而不是 add_vline，避免日期格式問題）
+    try:
+        today = pd.Timestamp.now()
+        fig.add_shape(
+            type="line",
+            x0=today, x1=today,
+            y0=0, y1=1,
+            yref="paper",
+            line=dict(color="red", width=2, dash="dash"),
+        )
+        fig.add_annotation(
+            x=today, y=1,
+            yref="paper",
+            text="今日",
+            showarrow=False,
+            yshift=10,
+            font=dict(color="red", size=12)
+        )
+    except Exception as e:
+        pass  # 如果加今日線失敗，就不加
+
     return fig
 
 
 def create_status_pie(df_tasks):
     """狀態圓餅圖"""
+    if df_tasks.empty:
+        return None
+
     status_counts = df_tasks['status'].value_counts()
+
+    if status_counts.empty:
+        return None
+
     colors = {'Done': '#28a745', 'Going': '#ffc107', 'Delay': '#dc3545', '': '#6c757d'}
-    
+
     fig = go.Figure(data=[go.Pie(
         labels=status_counts.index,
         values=status_counts.values,
@@ -302,31 +339,37 @@ def create_status_pie(df_tasks):
         textinfo='value+percent',
         textposition='inside',
     )])
-    
+
     fig.update_layout(title='📊 任務狀態分佈', height=350)
     return fig
 
 
 def create_owner_workload(df_tasks):
     """負責單位工作量"""
+    if df_tasks.empty:
+        return None
+
     owner_stats = df_tasks.groupby('owner').agg({
         'task': 'count',
         'status': lambda x: list(x)
     }).reset_index()
-    
+
     owner_stats['done'] = owner_stats['status'].apply(lambda x: x.count('Done'))
     owner_stats['going'] = owner_stats['status'].apply(lambda x: x.count('Going'))
     owner_stats['delay'] = owner_stats['status'].apply(lambda x: x.count('Delay'))
     owner_stats = owner_stats[owner_stats['owner'] != ''].sort_values('task', ascending=True)
-    
+
+    if owner_stats.empty:
+        return None
+
     fig = go.Figure()
-    fig.add_trace(go.Bar(name='已完成', y=owner_stats['owner'], x=owner_stats['done'], 
+    fig.add_trace(go.Bar(name='已完成', y=owner_stats['owner'], x=owner_stats['done'],
                         orientation='h', marker_color='#28a745'))
-    fig.add_trace(go.Bar(name='進行中', y=owner_stats['owner'], x=owner_stats['going'], 
+    fig.add_trace(go.Bar(name='進行中', y=owner_stats['owner'], x=owner_stats['going'],
                         orientation='h', marker_color='#ffc107'))
-    fig.add_trace(go.Bar(name='延遲', y=owner_stats['owner'], x=owner_stats['delay'], 
+    fig.add_trace(go.Bar(name='延遲', y=owner_stats['owner'], x=owner_stats['delay'],
                         orientation='h', marker_color='#dc3545'))
-    
+
     fig.update_layout(
         barmode='stack',
         title='👥 各負責單位工作量',
@@ -338,9 +381,12 @@ def create_owner_workload(df_tasks):
 
 def create_progress_trend(df_tasks):
     """進度趨勢圖（模擬）"""
+    if df_tasks.empty:
+        return None
+
     # 根據計劃完成日期模擬進度
     dates = pd.date_range(start='2025-05-01', end='2025-09-30', freq='W')
-    
+
     progress_data = []
     for date in dates:
         done = len(df_tasks[(df_tasks['plan_end'].notna()) & (df_tasks['plan_end'] <= date)])
@@ -350,27 +396,27 @@ def create_progress_trend(df_tasks):
             'completed': done,
             'completion_rate': done / total * 100 if total > 0 else 0
         })
-    
+
     df_progress = pd.DataFrame(progress_data)
-    
+
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    
+
     fig.add_trace(
-        go.Bar(x=df_progress['date'], y=df_progress['completed'], 
+        go.Bar(x=df_progress['date'], y=df_progress['completed'],
                name='累計完成數', marker_color='#28a745', opacity=0.7),
         secondary_y=False,
     )
-    
+
     fig.add_trace(
-        go.Scatter(x=df_progress['date'], y=df_progress['completion_rate'], 
+        go.Scatter(x=df_progress['date'], y=df_progress['completion_rate'],
                   name='完成率 %', line=dict(color='#1f77b4', width=3)),
         secondary_y=True,
     )
-    
+
     fig.update_layout(title='📈 進度趨勢圖', height=400)
     fig.update_yaxes(title_text="完成數量", secondary_y=False)
     fig.update_yaxes(title_text="完成率 (%)", secondary_y=True, range=[0, 100])
-    
+
     return fig
 
 
@@ -765,20 +811,29 @@ def main():
     # Tab 2: 統計分析
     with tab2:
         col1, col2 = st.columns(2)
-        
+
         with col1:
             status_fig = create_status_pie(df_tasks)
-            st.plotly_chart(status_fig, use_container_width=True)
-        
+            if status_fig:
+                st.plotly_chart(status_fig, use_container_width=True)
+            else:
+                st.warning("資料不足，無法生成狀態圓餅圖")
+
         with col2:
             owner_fig = create_owner_workload(df_tasks)
-            st.plotly_chart(owner_fig, use_container_width=True)
-        
+            if owner_fig:
+                st.plotly_chart(owner_fig, use_container_width=True)
+            else:
+                st.warning("資料不足，無法生成負責單位工作量圖")
+
         st.divider()
-        
+
         # 進度趨勢
         trend_fig = create_progress_trend(df_tasks)
-        st.plotly_chart(trend_fig, use_container_width=True)
+        if trend_fig:
+            st.plotly_chart(trend_fig, use_container_width=True)
+        else:
+            st.warning("資料不足，無法生成進度趨勢圖")
     
     # Tab 3: 風險追蹤
     with tab3:
