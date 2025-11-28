@@ -95,6 +95,42 @@ def load_excel_data(uploaded_file):
             'update_date': df_software.iloc[4, 12] if pd.notna(df_software.iloc[4, 12]) else None,
         }
         
+        # 安全的數字轉換函數（定義在外層，避免重複定義）
+        def safe_float(val, default=0):
+            try:
+                if pd.isna(val):
+                    return default
+                # 如果是字串且包含非數字字符（如標題），返回預設值
+                if isinstance(val, str):
+                    # 移除空白和換行
+                    val_clean = str(val).strip()
+                    # 檢查是否包含中文或其他非數字字符
+                    if any(ord(c) > 127 for c in val_clean) or not val_clean.replace('.', '', 1).replace('-', '', 1).replace('+', '', 1).isdigit():
+                        return default
+                return float(val)
+            except (ValueError, TypeError):
+                return default
+
+        def safe_int(val, default=0):
+            try:
+                if pd.isna(val):
+                    return default
+                if isinstance(val, str):
+                    val_clean = str(val).strip()
+                    if any(ord(c) > 127 for c in val_clean) or not val_clean.replace('-', '', 1).replace('+', '', 1).isdigit():
+                        return default
+                return int(float(val))
+            except (ValueError, TypeError):
+                return default
+
+        def safe_datetime(val):
+            try:
+                if pd.isna(val):
+                    return None
+                return pd.to_datetime(val)
+            except:
+                return None
+
         # 解析任務資料
         tasks = []
         for i in range(6, len(df_software)):
@@ -102,36 +138,6 @@ def load_excel_data(uploaded_file):
             task_name = row[0]
 
             if pd.notna(task_name) and str(task_name).strip():
-                # 安全的數字轉換函數
-                def safe_float(val, default=0):
-                    try:
-                        if pd.isna(val):
-                            return default
-                        # 如果是字串且包含非數字字符（如標題），返回預設值
-                        if isinstance(val, str) and not val.replace('.', '', 1).replace('-', '', 1).isdigit():
-                            return default
-                        return float(val)
-                    except (ValueError, TypeError):
-                        return default
-
-                def safe_int(val, default=0):
-                    try:
-                        if pd.isna(val):
-                            return default
-                        if isinstance(val, str) and not val.replace('-', '', 1).isdigit():
-                            return default
-                        return int(float(val))
-                    except (ValueError, TypeError):
-                        return default
-
-                def safe_datetime(val):
-                    try:
-                        if pd.isna(val):
-                            return None
-                        return pd.to_datetime(val)
-                    except:
-                        return None
-
                 # 跳過標題行（檢查是否 row[4] 包含 "百分比" 等關鍵字）
                 if isinstance(row[4], str) and ('百分比' in str(row[4]) or '完成' in str(row[4])):
                     continue
@@ -169,17 +175,17 @@ def load_excel_data(uploaded_file):
         for i in range(5, len(df_system)):
             row = df_system.iloc[i]
             item_name = str(row[0]).strip() if pd.notna(row[0]) else ''
-            
+
             if item_name:
                 # 檢查是否為區域標題
                 if '區域' in item_name:
                     current_area = item_name
-                
+
                 item = {
                     'area': current_area,
                     'item': item_name,
                     'target_date': row[1] if pd.notna(row[1]) else None,
-                    'completion_pct': float(row[2]) if pd.notna(row[2]) else 0,
+                    'completion_pct': safe_float(row[2]),  # 使用 safe_float 而不是 float
                     'notes': str(row[3]) if pd.notna(row[3]) else '',
                     'is_area': '區域' in item_name,
                 }
