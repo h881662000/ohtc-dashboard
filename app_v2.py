@@ -1237,7 +1237,32 @@ def main():
 
         st.divider()
 
-        # 操作按鈕與批量操作
+        # ========== 先定義篩選條件和變數 ==========
+        # 套用篩選條件
+        filtered_tasks = st.session_state['edited_all_tasks'].copy()
+
+        # 篩選狀態
+        if status_filter_edit:
+            filtered_tasks = filtered_tasks[filtered_tasks['status'].isin(status_filter_edit)]
+
+        # 篩選負責單位
+        if owner_filter_edit:
+            filtered_tasks = filtered_tasks[filtered_tasks['owner'].isin(owner_filter_edit)]
+
+        # 搜尋任務關鍵字
+        if search_edit:
+            filtered_tasks = filtered_tasks[
+                filtered_tasks['task'].str.contains(search_edit, case=False, na=False) |
+                filtered_tasks['notes'].str.contains(search_edit, case=False, na=False)
+            ]
+
+        # 獲取所有現有的負責單位（用於下拉選單）
+        existing_owners = sorted(st.session_state['edited_all_tasks']['owner'].dropna().unique().tolist())
+        # 加入常用單位作為預設選項
+        common_owners = ['TIM SMA', 'TIM Controls', 'TIM Mechanical', 'TIM Electrical', 'Vendor']
+        owner_options = sorted(list(set(existing_owners + common_owners)))
+
+        # ========== 操作按鈕與批量操作 ==========
         st.markdown("**操作：**")
         op_col1, op_col2, op_col3, op_col4, op_col5 = st.columns(5)
 
@@ -1374,24 +1399,7 @@ def main():
         # 顯示選項
         show_all = st.checkbox("顯示所有欄位", value=False)
 
-        # 套用篩選條件
-        filtered_tasks = st.session_state['edited_all_tasks'].copy()
-
-        # 篩選狀態
-        if status_filter_edit:
-            filtered_tasks = filtered_tasks[filtered_tasks['status'].isin(status_filter_edit)]
-
-        # 篩選負責單位
-        if owner_filter_edit:
-            filtered_tasks = filtered_tasks[filtered_tasks['owner'].isin(owner_filter_edit)]
-
-        # 搜尋任務關鍵字
-        if search_edit:
-            filtered_tasks = filtered_tasks[
-                filtered_tasks['task'].str.contains(search_edit, case=False, na=False) |
-                filtered_tasks['notes'].str.contains(search_edit, case=False, na=False)
-            ]
-
+        # 顯示篩選結果數量
         st.caption(f"📊 顯示 {len(filtered_tasks)} / {len(st.session_state['edited_all_tasks'])} 個任務")
 
         # 可編輯的任務表格
@@ -1414,12 +1422,7 @@ def main():
                 'plan_start': '計劃開始', 'plan_end': '計劃完成', 'notes': '備註'
             }
 
-        # 獲取所有現有的負責單位（用於下拉選單）
-        existing_owners = sorted(st.session_state['edited_all_tasks']['owner'].dropna().unique().tolist())
-        # 加入常用單位作為預設選項
-        common_owners = ['TIM SMA', 'TIM Controls', 'TIM Mechanical', 'TIM Electrical', 'Vendor']
-        owner_options = sorted(list(set(existing_owners + common_owners)))
-
+        # 可編輯的任務表格
         edited_tasks_df = st.data_editor(
             filtered_tasks[edit_columns].rename(columns=column_names),
             column_config={
