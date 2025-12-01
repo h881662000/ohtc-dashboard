@@ -138,16 +138,25 @@ def load_excel_data(uploaded_file):
                 return default
 
         def safe_datetime(val):
-            """安全地轉換為日期時間，處理各種 Excel 日期格式"""
+            """安全地轉換為日期時間，處理各種 Excel 日期格式（包含 2026/04/01(週三) 格式）"""
             try:
                 if pd.isna(val):
                     return None
 
-                # 如果是字串且包含中文（可能是標題）
+                # 如果是字串，嘗試移除括號中的中文（如：2026/04/01(週三) → 2026/04/01）
                 if isinstance(val, str):
                     val_clean = str(val).strip()
-                    if any(ord(c) > 127 for c in val_clean):
+
+                    # 移除括號及其內容（處理 "2026/04/01(週三)" 格式）
+                    import re
+                    val_clean = re.sub(r'\([^)]*\)', '', val_clean).strip()
+
+                    # 如果清理後是空字串或只包含中文標題字樣，返回 None
+                    if not val_clean or val_clean in ['計劃開始日期', '計劃完成日期', '實際開始日期', '實際完成日期']:
                         return None
+
+                    # 使用清理後的字串進行轉換
+                    val = val_clean
 
                 # 嘗試轉換為 datetime
                 result = pd.to_datetime(val, errors='coerce')
@@ -839,7 +848,17 @@ def main():
         st.header("⚙️ 顯示設定")
         show_actual = st.checkbox("顯示實際進度", value=True)
         show_completed = st.checkbox("顯示已完成項目", value=True)
-        
+
+        # Excel 原始資料檢視
+        with st.expander("🔍 Excel 原始資料檢視（除錯用）", expanded=False):
+            try:
+                df_raw = pd.read_excel(uploaded_file, sheet_name='軟體時程', header=None, nrows=10)
+                st.write("**Excel 前 10 行原始資料：**")
+                st.dataframe(df_raw, use_container_width=True)
+                st.caption("請確認第 8 欄（I 欄，0-based 索引）和第 9 欄（J 欄）是否為計劃開始/完成日期")
+            except Exception as e:
+                st.error(f"無法讀取原始資料：{e}")
+
         st.divider()
 
         # 新專案範本生成器
@@ -1020,12 +1039,30 @@ def main():
     # Tab 1: 甘特圖
     with tab1:
         st.subheader("📅 專案甘特圖")
-        
+
+        # 診斷資訊
+        total_tasks = len(df_tasks)
+        tasks_with_dates = len(df_tasks[df_tasks['plan_start'].notna() & df_tasks['plan_end'].notna()])
+
+        with st.expander("📊 資料診斷資訊", expanded=False):
+            st.write(f"**總任務數：** {total_tasks}")
+            st.write(f"**有計劃日期的任務：** {tasks_with_dates}")
+            st.write(f"**缺少日期的任務：** {total_tasks - tasks_with_dates}")
+
+            if tasks_with_dates == 0:
+                st.error("⚠️ 所有任務都缺少計劃日期！請檢查 Excel 中的 I 欄（計劃開始）和 J 欄（計劃完成）是否有填寫日期。")
+
+            # 顯示前 5 筆任務的日期狀態
+            st.write("**前 5 筆任務的日期狀態：**")
+            debug_df = df_tasks[['task', 'plan_start', 'plan_end', 'status']].head(5)
+            st.dataframe(debug_df)
+
         gantt_fig = create_gantt_chart(df_tasks, show_actual)
         if gantt_fig:
             st.plotly_chart(gantt_fig, use_container_width=True)
         else:
-            st.warning("資料不足，無法生成甘特圖")
+            st.warning("⚠️ 資料不足，無法生成甘特圖")
+            st.info("💡 甘特圖需要任務包含「計劃開始日期」和「計劃完成日期」。請檢查 Excel 的 I 欄和 J 欄是否有填寫日期。")
     
     # Tab 2: 統計分析
     with tab2:
