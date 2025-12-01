@@ -259,7 +259,7 @@ def load_excel_data(uploaded_file):
 # ============================================================
 # 圖表生成函數
 # ============================================================
-def create_gantt_chart(df_tasks, show_actual=False):
+def create_gantt_chart(df_tasks, show_actual=False, show_today_line=True, gantt_auto_range=True):
     """建立甘特圖（使用 plotly.express.timeline）"""
     gantt_data = df_tasks[df_tasks['plan_start'].notna() & df_tasks['plan_end'].notna()].copy()
 
@@ -296,33 +296,56 @@ def create_gantt_chart(df_tasks, show_actual=False):
         # 反轉 Y 軸，使第一個任務在最上面
         fig.update_yaxes(autorange='reversed')
 
-        # 設定高度
+        # 計算專案時間範圍
+        min_date = gantt_data['Start'].min()
+        max_date = gantt_data['Finish'].max()
+        today = pd.Timestamp.now()
+
+        # 根據設定決定 X 軸範圍
+        if gantt_auto_range:
+            # 自動範圍：只顯示專案時間範圍 + 5% 緩衝
+            date_range = (max_date - min_date).total_seconds()
+            buffer = pd.Timedelta(seconds=date_range * 0.05)
+            x_range_start = min_date - buffer
+            x_range_end = max_date + buffer
+        else:
+            # 完整範圍：從今日（或專案開始，取較早者）到專案結束
+            x_range_start = min(today, min_date) - pd.Timedelta(days=7)
+            x_range_end = max_date + pd.Timedelta(days=7)
+
+        # 設定高度和 X 軸範圍
         fig.update_layout(
             height=max(500, len(gantt_data) * 28),
             xaxis_title='日期',
             yaxis_title='',
+            xaxis_range=[x_range_start, x_range_end],
         )
 
-        # 加入今日線
-        try:
-            today = pd.Timestamp.now()
-            fig.add_shape(
-                type="line",
-                x0=today, x1=today,
-                y0=0, y1=1,
-                yref="paper",
-                line=dict(color="red", width=2, dash="dash"),
-            )
-            fig.add_annotation(
-                x=today, y=1,
-                yref="paper",
-                text="今日",
-                showarrow=False,
-                yshift=10,
-                font=dict(color="red", size=12)
-            )
-        except:
-            pass
+        # 顯示今日線（依據用戶設定）
+        if show_today_line:
+            try:
+                # 如果是自動範圍模式，只在今日落在範圍內時顯示
+                # 如果是完整範圍模式，總是顯示
+                should_show = not gantt_auto_range or (x_range_start <= today <= x_range_end)
+
+                if should_show:
+                    fig.add_shape(
+                        type="line",
+                        x0=today, x1=today,
+                        y0=0, y1=1,
+                        yref="paper",
+                        line=dict(color="red", width=2, dash="dash"),
+                    )
+                    fig.add_annotation(
+                        x=today, y=1,
+                        yref="paper",
+                        text="今日",
+                        showarrow=False,
+                        yshift=10,
+                        font=dict(color="red", size=12)
+                    )
+            except:
+                pass
 
         return fig
 
@@ -886,6 +909,12 @@ def main():
         st.header("⚙️ 顯示設定")
         show_actual = st.checkbox("顯示實際進度", value=True)
         show_completed = st.checkbox("顯示已完成項目", value=True)
+        show_today_line = st.checkbox("顯示今日線", value=True, help="在甘特圖上標示今日位置")
+        gantt_auto_range = st.checkbox(
+            "甘特圖自動範圍",
+            value=True,
+            help="只顯示專案時間範圍，避免大片空白。取消勾選可看到從今日到專案的完整時間軸。"
+        )
 
         # Excel 原始資料檢視
         with st.expander("🔍 Excel 原始資料檢視（除錯用）", expanded=False):
@@ -1095,7 +1124,7 @@ def main():
             debug_df = df_tasks[['task', 'plan_start', 'plan_end', 'status']].head(5)
             st.dataframe(debug_df)
 
-        gantt_fig = create_gantt_chart(df_tasks, show_actual)
+        gantt_fig = create_gantt_chart(df_tasks, show_actual, show_today_line, gantt_auto_range)
         if gantt_fig:
             st.plotly_chart(gantt_fig, use_container_width=True)
         else:
