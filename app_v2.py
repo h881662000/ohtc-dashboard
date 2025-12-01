@@ -260,7 +260,7 @@ def load_excel_data(uploaded_file):
 # 圖表生成函數
 # ============================================================
 def create_gantt_chart(df_tasks, show_actual=False):
-    """建立甘特圖"""
+    """建立甘特圖（使用 plotly.express.timeline）"""
     gantt_data = df_tasks[df_tasks['plan_start'].notna() & df_tasks['plan_end'].notna()].copy()
 
     if gantt_data.empty:
@@ -273,49 +273,67 @@ def create_gantt_chart(df_tasks, show_actual=False):
         '': '#6c757d'
     }
 
-    fig = go.Figure()
+    try:
+        # 準備資料給 px.timeline
+        gantt_data['Start'] = pd.to_datetime(gantt_data['plan_start'])
+        gantt_data['Finish'] = pd.to_datetime(gantt_data['plan_end'])
+        gantt_data['Task'] = gantt_data['task']
+        gantt_data['Status'] = gantt_data['status']
 
-    # 記錄處理狀態
-    success_count = 0
-    error_count = 0
-    error_messages = []
+        # 創建甘特圖
+        import plotly.express as px
+        fig = px.timeline(
+            gantt_data,
+            x_start='Start',
+            x_end='Finish',
+            y='Task',
+            color='Status',
+            color_discrete_map=color_map,
+            title='📅 專案甘特圖',
+            hover_data=['owner']
+        )
 
-    # 計劃時程
-    for idx, row in gantt_data.iterrows():
+        # 反轉 Y 軸，使第一個任務在最上面
+        fig.update_yaxes(autorange='reversed')
+
+        # 設定高度
+        fig.update_layout(
+            height=max(500, len(gantt_data) * 28),
+            xaxis_title='日期',
+            yaxis_title='',
+        )
+
+        # 加入今日線
         try:
-            # 確保日期是 datetime 類型
-            plan_start = pd.to_datetime(row['plan_start'])
-            plan_end = pd.to_datetime(row['plan_end'])
+            today = pd.Timestamp.now()
+            fig.add_shape(
+                type="line",
+                x0=today, x1=today,
+                y0=0, y1=1,
+                yref="paper",
+                line=dict(color="red", width=2, dash="dash"),
+            )
+            fig.add_annotation(
+                x=today, y=1,
+                yref="paper",
+                text="今日",
+                showarrow=False,
+                yshift=10,
+                font=dict(color="red", size=12)
+            )
+        except:
+            pass
 
-            fig.add_trace(go.Bar(
-                name='計劃',
-                y=[row['task']],
-                x=[(plan_end - plan_start).days],
-                base=plan_start,
-                orientation='h',
-                marker_color=color_map.get(row['status'], '#6c757d'),
-                opacity=0.8,
-                hovertemplate=f"<b>{row['task']}</b><br>" +
-                             f"計劃: {plan_start.strftime('%Y-%m-%d')} ~ {plan_end.strftime('%Y-%m-%d')}<br>" +
-                             f"狀態: {row['status']}<br>" +
-                             f"負責: {row['owner']}<extra></extra>",
-                showlegend=False,
-            ))
-            success_count += 1
-        except Exception as e:
-            error_count += 1
-            if error_count <= 3:  # 只記錄前 3 個錯誤
-                error_messages.append(f"任務 '{row['task']}': {str(e)}")
-            continue  # 跳過有問題的資料
+        return fig
 
-    # 如果沒有成功添加任何任務，返回 None
-    if success_count == 0:
+    except Exception as e:
+        # 如果使用 px.timeline 失敗，記錄錯誤
         if 'gantt_chart_error_info' not in st.session_state:
             st.session_state['gantt_chart_error_info'] = {
                 'total': len(gantt_data),
-                'success': success_count,
-                'error': error_count,
-                'messages': error_messages
+                'success': 0,
+                'error': len(gantt_data),
+                'messages': [f'px.timeline 錯誤: {str(e)}']
             }
         return None
 
