@@ -25,6 +25,20 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 import warnings
 warnings.filterwarnings('ignore')
 
+# 導入通知模組
+try:
+    from notifications import NotificationConfig, ProjectNotifier
+    NOTIFICATIONS_AVAILABLE = True
+except ImportError:
+    NOTIFICATIONS_AVAILABLE = False
+
+# 導入模板生成器
+try:
+    from template_generator import ScheduleTemplateGenerator
+    TEMPLATE_GENERATOR_AVAILABLE = True
+except ImportError:
+    TEMPLATE_GENERATOR_AVAILABLE = False
+
 # ============================================================
 # 頁面設定
 # ============================================================
@@ -631,11 +645,11 @@ def generate_status_summary(data):
 # Excel 匯出函數
 # ============================================================
 def export_updated_excel(data, original_file, updated_tasks):
-    """匯出更新後的 Excel（包含專案資訊和任務編輯，移除外部連結）"""
+    """匯出更新後的 Excel（完整保留格式、公式、樣式）"""
     output = io.BytesIO()
     original_file.seek(0)
 
-    # 載入工作簿
+    # 載入工作簿，保留公式
     try:
         wb = load_workbook(original_file, keep_links=False, data_only=False)
     except:
@@ -643,7 +657,7 @@ def export_updated_excel(data, original_file, updated_tasks):
 
     ws = wb['軟體時程']
 
-    # 移除所有外部連結定義
+    # 移除外部連結（但保留內部公式）
     if hasattr(wb, 'defined_names'):
         names_to_remove = []
         for name in wb.defined_names:
@@ -658,11 +672,10 @@ def export_updated_excel(data, original_file, updated_tasks):
             except:
                 continue
 
-    # 移除工作簿的外部連結
     if hasattr(wb, '_external_links'):
         wb._external_links = []
 
-    # 遍歷所有工作表，移除包含外部引用的公式
+    # 只移除外部引用的公式，保留內部公式
     for sheet in wb.worksheets:
         for row in sheet.iter_rows():
             for cell in row:
@@ -673,54 +686,108 @@ def export_updated_excel(data, original_file, updated_tasks):
                         except:
                             continue
 
-    # 更新專案資訊
+    # 更新專案資訊（保留格式）
     project_info = data.get('project_info', {})
-    ws.cell(row=3, column=3, value=project_info.get('project_code', ''))  # 專案工令
-    ws.cell(row=4, column=3, value=project_info.get('project_name', ''))  # 專案名稱
-    ws.cell(row=5, column=3, value=project_info.get('project_lead', ''))  # 專案負責人
+    ws.cell(row=3, column=3).value = project_info.get('project_code', '')
+    ws.cell(row=4, column=3).value = project_info.get('project_name', '')
+    ws.cell(row=5, column=3).value = project_info.get('project_lead', '')
 
-    # 清空現有任務資料（從第 7 行開始）
-    for row_idx in range(7, ws.max_row + 1):
-        for col_idx in range(1, 21):  # 清空前 20 列
-            ws.cell(row=row_idx, column=col_idx, value=None)
+    # 獲取範本行（第 7 行）的樣式，用於新增任務
+    template_row_idx = 7
+    template_row_styles = {}
+    for col in range(1, 21):
+        cell = ws.cell(row=template_row_idx, column=col)
+        template_row_styles[col] = {
+            'font': cell.font.copy() if cell.font else None,
+            'fill': cell.fill.copy() if cell.fill else None,
+            'border': cell.border.copy() if cell.border else None,
+            'alignment': cell.alignment.copy() if cell.alignment else None,
+            'number_format': cell.number_format,
+        }
 
-    # 寫入更新後的任務
+    # 計算原始任務數量（假設從第 7 行開始）
+    original_task_count = len(data.get('tasks', pd.DataFrame()))
+    new_task_count = len(updated_tasks)
+
+    # 如果任務數量減少，刪除多餘的行
+    if new_task_count < original_task_count:
+        for row_idx in range(7 + new_task_count, 7 + original_task_count):
+            # 清空該行的內容，但保留格式
+            for col in range(1, 21):
+                ws.cell(row=row_idx, column=col).value = None
+
+    # 更新或新增任務（只更新數值欄位，保留公式欄位）
     for idx, task in updated_tasks.iterrows():
-        row_num = idx + 7  # 從第 7 行開始（Excel 行數）
+        row_num = idx + 7  # 從第 7 行開始
 
-        # 寫入所有任務欄位
-        ws.cell(row=row_num, column=1, value=task.get('task', ''))  # 任務名稱
-        ws.cell(row=row_num, column=3, value=task.get('owner', ''))  # 負責單位
-        ws.cell(row=row_num, column=5, value=task.get('progress_pct', 0))  # 完成百分比
-        ws.cell(row=row_num, column=6, value=task.get('target_pct', 0))  # 目標百分比
-        ws.cell(row=row_num, column=7, value=task.get('remaining_days', 0))  # 剩餘天數
-        ws.cell(row=row_num, column=8, value=task.get('status', ''))  # 狀態
+        # 如果是新增的任務（超過原始行數），複製範本樣式
+        if idx >= original_task_count:
+            for col in range(1, 21):
+                cell = ws.cell(row=row_num, column=col)
+                style = template_row_styles.get(col, {})
+                if style.get('font'):
+                    cell.font = style['font']
+                if style.get('fill'):
+                    cell.fill = style['fill']
+                if style.get('border'):
+                    cell.border = style['border']
+                if style.get('alignment'):
+                    cell.alignment = style['alignment']
+                if style.get('number_format'):
+                    cell.number_format = style['number_format']
 
-        # 日期欄位
+        # 只更新非公式欄位（保留 Excel 中的公式）
+        # 欄位 1: 任務名稱
+        cell = ws.cell(row=row_num, column=1)
+        if not (cell.value and isinstance(cell.value, str) and cell.value.startswith('=')):
+            cell.value = task.get('task', '')
+
+        # 欄位 3: 負責單位
+        cell = ws.cell(row=row_num, column=3)
+        if not (cell.value and isinstance(cell.value, str) and cell.value.startswith('=')):
+            cell.value = task.get('owner', '')
+
+        # 欄位 5-7: 進度數值（可能有公式，檢查後再更新）
+        for col, key in [(5, 'progress_pct'), (6, 'target_pct'), (7, 'remaining_days')]:
+            cell = ws.cell(row=row_num, column=col)
+            if not (cell.value and isinstance(cell.value, str) and cell.value.startswith('=')):
+                cell.value = task.get(key, 0)
+
+        # 欄位 8: 狀態
+        ws.cell(row=row_num, column=8).value = task.get('status', '')
+
+        # 欄位 9-10: 計劃日期
         if pd.notna(task.get('plan_start')):
-            ws.cell(row=row_num, column=9, value=pd.to_datetime(task['plan_start']))
+            ws.cell(row=row_num, column=9).value = pd.to_datetime(task['plan_start'])
         if pd.notna(task.get('plan_end')):
-            ws.cell(row=row_num, column=10, value=pd.to_datetime(task['plan_end']))
+            ws.cell(row=row_num, column=10).value = pd.to_datetime(task['plan_end'])
 
-        ws.cell(row=row_num, column=11, value=task.get('plan_days', 0))  # 計劃天數
+        # 欄位 11: 計劃天數（可能是公式）
+        cell = ws.cell(row=row_num, column=11)
+        if not (cell.value and isinstance(cell.value, str) and cell.value.startswith('=')):
+            cell.value = task.get('plan_days', 0)
 
+        # 欄位 12-13: 實際日期
         if pd.notna(task.get('actual_start')):
-            ws.cell(row=row_num, column=12, value=pd.to_datetime(task['actual_start']))
+            ws.cell(row=row_num, column=12).value = pd.to_datetime(task['actual_start'])
         if pd.notna(task.get('actual_end')):
-            ws.cell(row=row_num, column=13, value=pd.to_datetime(task['actual_end']))
+            ws.cell(row=row_num, column=13).value = pd.to_datetime(task['actual_end'])
 
-        ws.cell(row=row_num, column=14, value=task.get('actual_days', 0))  # 實際天數
-        ws.cell(row=row_num, column=15, value=task.get('variance_days', 0))  # 誤差天數
+        # 欄位 14-15: 實際天數、誤差天數（可能是公式）
+        for col, key in [(14, 'actual_days'), (15, 'variance_days')]:
+            cell = ws.cell(row=row_num, column=col)
+            if not (cell.value and isinstance(cell.value, str) and cell.value.startswith('=')):
+                cell.value = task.get(key, 0)
 
-        # 協調欄位
-        ws.cell(row=row_num, column=16, value=task.get('coord_time', ''))
-        ws.cell(row=row_num, column=17, value=task.get('coord_manpower', ''))
-        ws.cell(row=row_num, column=18, value=task.get('coord_area', ''))
-        ws.cell(row=row_num, column=19, value=task.get('coord_equipment', ''))
-        ws.cell(row=row_num, column=20, value=task.get('notes', ''))  # 備註
+        # 欄位 16-20: 協調欄位和備註
+        ws.cell(row=row_num, column=16).value = task.get('coord_time', '')
+        ws.cell(row=row_num, column=17).value = task.get('coord_manpower', '')
+        ws.cell(row=row_num, column=18).value = task.get('coord_area', '')
+        ws.cell(row=row_num, column=19).value = task.get('coord_equipment', '')
+        ws.cell(row=row_num, column=20).value = task.get('notes', '')
 
     # 更新日期
-    ws.cell(row=5, column=13, value=datetime.now())
+    ws.cell(row=5, column=13).value = datetime.now()
 
     # 儲存
     wb.save(output)
@@ -758,7 +825,57 @@ def main():
         show_completed = st.checkbox("顯示已完成項目", value=True)
         
         st.divider()
-        
+
+        # 新專案範本生成器
+        if TEMPLATE_GENERATOR_AVAILABLE:
+            st.header("➕ 新專案範本")
+
+            with st.expander("生成新專案 Excel 範本", expanded=False):
+                st.markdown("**專案資訊：**")
+                new_proj_name = st.text_input("專案名稱", value="新專案", key="new_proj_name")
+                new_proj_code = st.text_input("專案工令", value="", key="new_proj_code")
+                new_proj_lead = st.text_input("專案負責人", value="", key="new_proj_lead")
+                new_proj_start = st.date_input("開始日期", value=datetime.now(), key="new_proj_start")
+
+                if st.button("🔧 生成範本 Excel", type="primary", use_container_width=True):
+                    try:
+                        project_info = {
+                            'name': new_proj_name,
+                            'project_code': new_proj_code,
+                            'lead': new_proj_lead,
+                            'start_date': new_proj_start,
+                        }
+
+                        generator = ScheduleTemplateGenerator()
+
+                        # 生成到 BytesIO 而非檔案
+                        generator.create_software_schedule(project_info)
+                        generator.create_system_schedule()
+                        generator.create_engineering_progress()
+                        generator.create_eq_list()
+                        generator.create_location_map()
+                        generator.create_fab_map()
+
+                        # 儲存到 BytesIO
+                        excel_buffer = io.BytesIO()
+                        generator.wb.save(excel_buffer)
+                        excel_buffer.seek(0)
+
+                        st.download_button(
+                            label="⬇️ 下載新專案範本",
+                            data=excel_buffer,
+                            file_name=f"{new_proj_name}_排程表_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+                        st.success("✅ 新專案範本已生成！")
+                        st.info("💡 下載後可直接填寫任務資訊並上傳到儀表板")
+                    except Exception as e:
+                        st.error(f"❌ 生成失敗: {str(e)}")
+                        st.exception(e)
+
+            st.divider()
+
         st.header("📅 報表設定")
         report_date = st.date_input("報表日期", datetime.now())
     
@@ -801,10 +918,19 @@ def main():
     data = load_excel_data(uploaded_file)
     if data is None:
         return
-    
-    project_info = data['project_info']
-    df_tasks = data['tasks']
-    df_system = data['system_tasks']
+
+    # 初始化 session_state（如果還沒有）
+    if 'edited_project_info' not in st.session_state:
+        st.session_state['edited_project_info'] = data['project_info'].copy()
+    if 'edited_all_tasks' not in st.session_state:
+        st.session_state['edited_all_tasks'] = data['tasks'].copy()
+    if 'edited_system_tasks' not in st.session_state:
+        st.session_state['edited_system_tasks'] = data['system_tasks'].copy()
+
+    # 使用編輯後的資料（如果有），否則使用原始資料
+    project_info = st.session_state.get('edited_project_info', data['project_info'])
+    df_tasks = st.session_state.get('edited_all_tasks', data['tasks'])
+    df_system = st.session_state.get('edited_system_tasks', data['system_tasks'])
     
     # 專案資訊卡
     st.markdown("### 📌 專案資訊")
@@ -1035,11 +1161,34 @@ def main():
     with tab6:
         st.subheader("✏️ 專案與任務編輯器")
 
-        # 初始化 session_state
-        if 'edited_project_info' not in st.session_state:
-            st.session_state['edited_project_info'] = project_info.copy()
-        if 'edited_all_tasks' not in st.session_state:
-            st.session_state['edited_all_tasks'] = df_tasks.copy()
+        # 初始化編輯歷史（用於撤銷/重做）
+        if 'edit_history' not in st.session_state:
+            st.session_state['edit_history'] = []
+            st.session_state['history_index'] = -1
+
+        # 顯示編輯狀態
+        status_col1, status_col2, status_col3 = st.columns([2, 1, 1])
+        with status_col1:
+            if 'last_edit_time' in st.session_state:
+                st.info(f"💡 最後編輯時間：{st.session_state['last_edit_time']}｜所有分頁已同步更新")
+        with status_col2:
+            # 撤銷按鈕
+            can_undo = st.session_state['history_index'] > 0
+            if st.button("↶ 撤銷", disabled=not can_undo, use_container_width=True, help="返回上一步操作"):
+                if can_undo:
+                    st.session_state['history_index'] -= 1
+                    st.session_state['edited_all_tasks'] = st.session_state['edit_history'][st.session_state['history_index']].copy()
+                    st.success("✅ 已撤銷上一步操作")
+                    st.rerun()
+        with status_col3:
+            # 重做按鈕
+            can_redo = st.session_state['history_index'] < len(st.session_state['edit_history']) - 1
+            if st.button("↷ 重做", disabled=not can_redo, use_container_width=True, help="重做已撤銷的操作"):
+                if can_redo:
+                    st.session_state['history_index'] += 1
+                    st.session_state['edited_all_tasks'] = st.session_state['edit_history'][st.session_state['history_index']].copy()
+                    st.success("✅ 已重做操作")
+                    st.rerun()
 
         # 專案資訊編輯
         st.markdown("### 📌 專案資訊")
@@ -1057,18 +1206,42 @@ def main():
                 st.session_state['edited_project_info']['project_name'] = new_project_name
                 st.session_state['edited_project_info']['project_lead'] = new_project_lead
                 st.session_state['edited_project_info']['start_date'] = new_start_date
-                st.success("✅ 專案資訊已更新")
+                st.session_state['last_edit_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                st.success("✅ 專案資訊已更新｜所有圖表已同步")
+                st.rerun()
 
         st.divider()
 
         # 任務編輯
         st.markdown("### 📋 任務清單編輯")
 
-        # 新增任務按鈕
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col1:
-            st.markdown("**操作：**")
-        with col2:
+        # 篩選器
+        st.markdown("**🔍 篩選與搜尋：**")
+        filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
+        with filter_col1:
+            status_filter_edit = st.multiselect(
+                "篩選狀態",
+                options=['Done', 'Going', 'Delay'],
+                default=['Done', 'Going', 'Delay'],
+                key="status_filter_edit"
+            )
+        with filter_col2:
+            owners_list = sorted(st.session_state['edited_all_tasks']['owner'].dropna().unique().tolist())
+            owner_filter_edit = st.multiselect("篩選負責單位", options=owners_list, key="owner_filter_edit")
+        with filter_col3:
+            search_edit = st.text_input("🔍 搜尋任務關鍵字", key="search_edit")
+        with filter_col4:
+            clear_filter = st.button("🔄 清除篩選", use_container_width=True)
+            if clear_filter:
+                st.rerun()
+
+        st.divider()
+
+        # 操作按鈕與批量操作
+        st.markdown("**操作：**")
+        op_col1, op_col2, op_col3, op_col4, op_col5 = st.columns(5)
+
+        with op_col1:
             if st.button("➕ 新增任務", type="primary", use_container_width=True):
                 new_task = {
                     'id': len(st.session_state['edited_all_tasks']) + 1,
@@ -1098,8 +1271,128 @@ def main():
                 ], ignore_index=True)
                 st.rerun()
 
-        with col3:
-            show_all = st.checkbox("顯示所有欄位", value=False)
+        # 批量操作區域
+        with op_col2:
+            with st.popover("📝 批量修改狀態", use_container_width=True):
+                batch_status = st.selectbox("選擇新狀態", ["Done", "Going", "Delay"], key="batch_status")
+                batch_task_ids = st.multiselect(
+                    "選擇要修改的任務 ID",
+                    options=filtered_tasks['id'].tolist(),
+                    key="batch_status_ids"
+                )
+                if st.button("✅ 套用批量狀態修改", use_container_width=True):
+                    if batch_task_ids:
+                        for task_id in batch_task_ids:
+                            idx = st.session_state['edited_all_tasks'][st.session_state['edited_all_tasks']['id'] == task_id].index
+                            if len(idx) > 0:
+                                st.session_state['edited_all_tasks'].loc[idx[0], 'status'] = batch_status
+                        st.session_state['last_edit_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        st.success(f"✅ 已將 {len(batch_task_ids)} 個任務狀態改為 {batch_status}")
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ 請選擇至少一個任務")
+
+        with op_col3:
+            with st.popover("👥 批量修改負責單位", use_container_width=True):
+                batch_owner = st.selectbox("選擇新負責單位", owner_options, key="batch_owner")
+                batch_owner_ids = st.multiselect(
+                    "選擇要修改的任務 ID",
+                    options=filtered_tasks['id'].tolist(),
+                    key="batch_owner_ids"
+                )
+                if st.button("✅ 套用批量負責單位修改", use_container_width=True):
+                    if batch_owner_ids:
+                        for task_id in batch_owner_ids:
+                            idx = st.session_state['edited_all_tasks'][st.session_state['edited_all_tasks']['id'] == task_id].index
+                            if len(idx) > 0:
+                                st.session_state['edited_all_tasks'].loc[idx[0], 'owner'] = batch_owner
+                        st.session_state['last_edit_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        st.success(f"✅ 已將 {len(batch_owner_ids)} 個任務負責單位改為 {batch_owner}")
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ 請選擇至少一個任務")
+
+        with op_col4:
+            with st.popover("🗑️ 批量刪除", use_container_width=True):
+                batch_delete_ids = st.multiselect(
+                    "選擇要刪除的任務 ID",
+                    options=filtered_tasks['id'].tolist(),
+                    key="batch_delete_ids"
+                )
+                st.warning(f"⚠️ 將刪除 {len(batch_delete_ids)} 個任務，此操作無法復原")
+                if st.button("🗑️ 確認批量刪除", type="secondary", use_container_width=True):
+                    if batch_delete_ids:
+                        st.session_state['edited_all_tasks'] = st.session_state['edited_all_tasks'][
+                            ~st.session_state['edited_all_tasks']['id'].isin(batch_delete_ids)
+                        ].reset_index(drop=True)
+                        # 重新計算 ID
+                        st.session_state['edited_all_tasks']['id'] = range(1, len(st.session_state['edited_all_tasks']) + 1)
+                        st.session_state['last_edit_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        st.success(f"✅ 已刪除 {len(batch_delete_ids)} 個任務")
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ 請選擇至少一個任務")
+
+        with op_col5:
+            with st.popover("📋 複製任務", use_container_width=True):
+                copy_task_id = st.selectbox(
+                    "選擇要複製的任務 ID",
+                    options=filtered_tasks['id'].tolist(),
+                    key="copy_task_id"
+                )
+                copy_count = st.number_input("複製份數", min_value=1, max_value=10, value=1, key="copy_count")
+
+                if st.button("📋 確認複製", use_container_width=True):
+                    if copy_task_id:
+                        # 找到要複製的任務
+                        original_task = st.session_state['edited_all_tasks'][
+                            st.session_state['edited_all_tasks']['id'] == copy_task_id
+                        ]
+
+                        if not original_task.empty:
+                            # 複製任務
+                            for i in range(copy_count):
+                                new_task = original_task.iloc[0].to_dict()
+                                new_task['id'] = len(st.session_state['edited_all_tasks']) + 1
+                                new_task['row_index'] = len(st.session_state['edited_all_tasks']) + 6
+                                new_task['task'] = f"{new_task['task']} (副本{i+1})"
+
+                                st.session_state['edited_all_tasks'] = pd.concat([
+                                    st.session_state['edited_all_tasks'],
+                                    pd.DataFrame([new_task])
+                                ], ignore_index=True)
+
+                            # 重新計算 ID
+                            st.session_state['edited_all_tasks']['id'] = range(1, len(st.session_state['edited_all_tasks']) + 1)
+
+                            st.session_state['last_edit_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            st.success(f"✅ 已複製 {copy_count} 個任務")
+                            st.rerun()
+                        else:
+                            st.error("❌ 找不到要複製的任務")
+
+        # 顯示選項
+        show_all = st.checkbox("顯示所有欄位", value=False)
+
+        # 套用篩選條件
+        filtered_tasks = st.session_state['edited_all_tasks'].copy()
+
+        # 篩選狀態
+        if status_filter_edit:
+            filtered_tasks = filtered_tasks[filtered_tasks['status'].isin(status_filter_edit)]
+
+        # 篩選負責單位
+        if owner_filter_edit:
+            filtered_tasks = filtered_tasks[filtered_tasks['owner'].isin(owner_filter_edit)]
+
+        # 搜尋任務關鍵字
+        if search_edit:
+            filtered_tasks = filtered_tasks[
+                filtered_tasks['task'].str.contains(search_edit, case=False, na=False) |
+                filtered_tasks['notes'].str.contains(search_edit, case=False, na=False)
+            ]
+
+        st.caption(f"📊 顯示 {len(filtered_tasks)} / {len(st.session_state['edited_all_tasks'])} 個任務")
 
         # 可編輯的任務表格
         if show_all:
@@ -1121,20 +1414,26 @@ def main():
                 'plan_start': '計劃開始', 'plan_end': '計劃完成', 'notes': '備註'
             }
 
+        # 獲取所有現有的負責單位（用於下拉選單）
+        existing_owners = sorted(st.session_state['edited_all_tasks']['owner'].dropna().unique().tolist())
+        # 加入常用單位作為預設選項
+        common_owners = ['TIM SMA', 'TIM Controls', 'TIM Mechanical', 'TIM Electrical', 'Vendor']
+        owner_options = sorted(list(set(existing_owners + common_owners)))
+
         edited_tasks_df = st.data_editor(
-            st.session_state['edited_all_tasks'][edit_columns].rename(columns=column_names),
+            filtered_tasks[edit_columns].rename(columns=column_names),
             column_config={
                 "ID": st.column_config.NumberColumn("ID", disabled=True, width="small"),
                 "任務名稱": st.column_config.TextColumn("任務名稱", width="large"),
-                "負責單位": st.column_config.TextColumn("負責單位", width="medium"),
+                "負責單位": st.column_config.SelectboxColumn("負責單位", options=owner_options, width="medium"),
                 "狀態": st.column_config.SelectboxColumn("狀態", options=["Done", "Going", "Delay"], width="small"),
                 "計劃開始": st.column_config.DateColumn("計劃開始", format="YYYY-MM-DD"),
                 "計劃完成": st.column_config.DateColumn("計劃完成", format="YYYY-MM-DD"),
-                "計劃天數": st.column_config.NumberColumn("計劃天數", width="small"),
+                "計劃天數": st.column_config.NumberColumn("計劃天數", width="small", disabled=True),
                 "實際開始": st.column_config.DateColumn("實際開始", format="YYYY-MM-DD"),
                 "實際完成": st.column_config.DateColumn("實際完成", format="YYYY-MM-DD"),
-                "完成%": st.column_config.NumberColumn("完成%", format="%.0f%%", width="small"),
-                "誤差天數": st.column_config.NumberColumn("誤差天數", width="small"),
+                "完成%": st.column_config.NumberColumn("完成%", min_value=0, max_value=100, format="%.0f%%", width="small"),
+                "誤差天數": st.column_config.NumberColumn("誤差天數", width="small", disabled=True),
                 "備註": st.column_config.TextColumn("備註", width="large"),
             },
             num_rows="dynamic",  # 允許新增/刪除行
@@ -1143,37 +1442,182 @@ def main():
             key="task_editor"
         )
 
-        st.caption(f"📊 目前共有 {len(edited_tasks_df)} 個任務")
-
         # 儲存變更
         col1, col2, col3 = st.columns([1, 1, 2])
         with col1:
             if st.button("💾 儲存所有變更", type="primary", use_container_width=True):
-                # 將編輯後的資料寫回 session_state
                 # 還原欄位名稱
                 reverse_column_names = {v: k for k, v in column_names.items()}
-                edited_tasks_df = edited_tasks_df.rename(columns=reverse_column_names)
+                edited_tasks_df_copy = edited_tasks_df.rename(columns=reverse_column_names)
 
-                # 更新 edited_all_tasks 的對應欄位
-                for col in edit_columns:
-                    if col in edited_tasks_df.columns:
-                        st.session_state['edited_all_tasks'][col] = edited_tasks_df[col]
+                # ========== 資料驗證 ==========
+                validation_errors = []
 
-                # 重新計算 ID
-                st.session_state['edited_all_tasks']['id'] = range(1, len(st.session_state['edited_all_tasks']) + 1)
+                for idx, row in edited_tasks_df_copy.iterrows():
+                    task_id = idx + 1
 
-                st.success(f"✅ 已儲存 {len(edited_tasks_df)} 個任務的變更")
-                st.info("💡 請前往「匯出」分頁下載更新後的 Excel 檔案")
+                    # 1. 必填欄位檢查
+                    if pd.isna(row.get('task')) or str(row.get('task', '')).strip() == '':
+                        validation_errors.append(f"第 {task_id} 行：任務名稱不能為空")
+
+                    if pd.isna(row.get('owner')) or str(row.get('owner', '')).strip() == '':
+                        validation_errors.append(f"第 {task_id} 行：負責單位不能為空")
+
+                    if pd.isna(row.get('status')) or str(row.get('status', '')).strip() == '':
+                        validation_errors.append(f"第 {task_id} 行：狀態不能為空")
+
+                    # 2. 日期邏輯檢查
+                    plan_start = row.get('plan_start')
+                    plan_end = row.get('plan_end')
+
+                    if pd.notna(plan_start) and pd.notna(plan_end):
+                        if pd.to_datetime(plan_start) > pd.to_datetime(plan_end):
+                            validation_errors.append(f"第 {task_id} 行：計劃開始日期 ({plan_start}) 不能晚於計劃完成日期 ({plan_end})")
+
+                    # 檢查實際日期
+                    if 'actual_start' in row and 'actual_end' in row:
+                        actual_start = row.get('actual_start')
+                        actual_end = row.get('actual_end')
+
+                        if pd.notna(actual_start) and pd.notna(actual_end):
+                            if pd.to_datetime(actual_start) > pd.to_datetime(actual_end):
+                                validation_errors.append(f"第 {task_id} 行：實際開始日期不能晚於實際完成日期")
+
+                    # 3. 百分比範圍檢查
+                    if 'progress_pct' in row:
+                        progress = row.get('progress_pct')
+                        if pd.notna(progress):
+                            try:
+                                progress_val = float(progress)
+                                if progress_val < 0 or progress_val > 100:
+                                    validation_errors.append(f"第 {task_id} 行：完成百分比必須在 0-100 之間（目前：{progress_val}）")
+                            except (ValueError, TypeError):
+                                validation_errors.append(f"第 {task_id} 行：完成百分比格式錯誤")
+
+                # 顯示驗證錯誤
+                if validation_errors:
+                    st.error("❌ 資料驗證失敗，請修正以下錯誤：")
+                    for error in validation_errors[:10]:  # 最多顯示 10 個錯誤
+                        st.error(f"• {error}")
+                    if len(validation_errors) > 10:
+                        st.error(f"... 還有 {len(validation_errors) - 10} 個錯誤未顯示")
+                else:
+                    # 驗證通過，儲存資料
+                    # 儲存到歷史記錄（用於撤銷/重做）
+                    if len(st.session_state['edit_history']) == 0 or not st.session_state['edited_all_tasks'].equals(st.session_state['edit_history'][-1]):
+                        # 清除重做歷史
+                        st.session_state['edit_history'] = st.session_state['edit_history'][:st.session_state['history_index'] + 1]
+                        # 加入新歷史
+                        st.session_state['edit_history'].append(st.session_state['edited_all_tasks'].copy())
+                        st.session_state['history_index'] = len(st.session_state['edit_history']) - 1
+                        # 限制歷史記錄數量（最多 20 步）
+                        if len(st.session_state['edit_history']) > 20:
+                            st.session_state['edit_history'] = st.session_state['edit_history'][-20:]
+                            st.session_state['history_index'] = 19
+
+                    # 更新 edited_all_tasks 的對應欄位
+                    for col in edit_columns:
+                        if col in edited_tasks_df_copy.columns:
+                            st.session_state['edited_all_tasks'][col] = edited_tasks_df_copy[col]
+
+                    # 重新計算 ID
+                    st.session_state['edited_all_tasks']['id'] = range(1, len(st.session_state['edited_all_tasks']) + 1)
+
+                    # 更新時間戳記
+                    st.session_state['last_edit_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+                    # 儲存當前狀態到歷史
+                    st.session_state['edit_history'].append(st.session_state['edited_all_tasks'].copy())
+                    st.session_state['history_index'] = len(st.session_state['edit_history']) - 1
+
+                    st.success(f"✅ 已儲存 {len(edited_tasks_df_copy)} 個任務的變更｜所有圖表已同步")
+                    st.info("💡 所有分頁的圖表已更新，前往「匯出」分頁下載 Excel")
+                    st.rerun()
 
         with col2:
             if st.button("🔄 重置為原始資料", use_container_width=True):
-                st.session_state['edited_project_info'] = project_info.copy()
-                st.session_state['edited_all_tasks'] = df_tasks.copy()
+                st.session_state['edited_project_info'] = data['project_info'].copy()
+                st.session_state['edited_all_tasks'] = data['tasks'].copy()
+                st.session_state['edited_system_tasks'] = data['system_tasks'].copy()
+                if 'last_edit_time' in st.session_state:
+                    del st.session_state['last_edit_time']
                 st.success("✅ 已重置為原始資料")
                 st.rerun()
 
         with col3:
             st.markdown("**提示：** 可直接在表格中編輯、新增或刪除行（點擊行號旁的 ✖️）")
+
+        st.divider()
+        st.divider()
+
+        # ========== 系統時程編輯 ==========
+        st.markdown("### 🏭 系統時程編輯")
+        st.info("💡 編輯各區域的完成百分比、目標日期等資訊")
+
+        # 系統時程編輯器
+        if not df_system.empty and 'edited_system_tasks' in st.session_state:
+            system_col1, system_col2 = st.columns([3, 1])
+
+            with system_col1:
+                # 只顯示區域（is_area == True）的項目
+                area_tasks = st.session_state['edited_system_tasks'][
+                    st.session_state['edited_system_tasks']['is_area'] == True
+                ].copy()
+
+                if not area_tasks.empty:
+                    # 可編輯的系統時程表格
+                    system_edit_columns = ['item', 'completion_pct', 'target_date', 'notes']
+                    system_column_names = {
+                        'item': '區域', 'completion_pct': '完成百分比',
+                        'target_date': '目標日期', 'notes': '備註'
+                    }
+
+                    edited_system_df = st.data_editor(
+                        area_tasks[system_edit_columns].rename(columns=system_column_names),
+                        column_config={
+                            "區域": st.column_config.TextColumn("區域", disabled=True, width="medium"),
+                            "完成百分比": st.column_config.NumberColumn(
+                                "完成百分比",
+                                min_value=0,
+                                max_value=1,
+                                format="%.2f",
+                                width="small",
+                                help="輸入 0-1 之間的數值（例如：0.75 代表 75%）"
+                            ),
+                            "目標日期": st.column_config.DateColumn("目標日期", format="YYYY-MM-DD"),
+                            "備註": st.column_config.TextColumn("備註", width="large"),
+                        },
+                        use_container_width=True,
+                        hide_index=True,
+                        key="system_editor"
+                    )
+
+                    st.caption(f"📊 共有 {len(edited_system_df)} 個區域")
+
+            with system_col2:
+                st.markdown("**系統時程操作：**")
+
+                if st.button("💾 儲存系統時程", type="primary", use_container_width=True):
+                    # 還原欄位名稱
+                    reverse_system_names = {v: k for k, v in system_column_names.items()}
+                    edited_system_copy = edited_system_df.rename(columns=reverse_system_names)
+
+                    # 更新 session_state 中的系統時程資料（只更新區域項目）
+                    area_indices = area_tasks.index
+                    for col in system_edit_columns:
+                        if col in edited_system_copy.columns:
+                            st.session_state['edited_system_tasks'].loc[area_indices, col] = edited_system_copy[col].values
+
+                    st.session_state['last_edit_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    st.success("✅ 系統時程已更新")
+                    st.rerun()
+
+                if st.button("🔄 重置系統時程", use_container_width=True):
+                    st.session_state['edited_system_tasks'] = data['system_tasks'].copy()
+                    st.success("✅ 已重置為原始系統時程")
+                    st.rerun()
+        else:
+            st.warning("⚠️ 未偵測到系統時程資料")
 
     # Tab 7: 週報生成
     with tab7:
@@ -1203,7 +1647,106 @@ def main():
             st.metric("完成率", f"{summary['done']/summary['total']*100:.1f}%")
             st.metric("延遲項目", summary['delay'])
             st.metric("本週到期", len(summary['upcoming']))
-    
+
+            st.divider()
+
+            # 通知功能
+            st.markdown("### 📢 發送通知")
+
+            if NOTIFICATIONS_AVAILABLE:
+                # 初始化通知配置 session_state
+                if 'notification_config' not in st.session_state:
+                    st.session_state['notification_config'] = {
+                        'teams_enabled': False,
+                        'teams_webhook': '',
+                        'slack_enabled': False,
+                        'slack_webhook': '',
+                        'email_enabled': False,
+                        'email_recipients': '',
+                    }
+
+                with st.expander("⚙️ 通知設定", expanded=False):
+                    # Teams 設定
+                    teams_enabled = st.checkbox("啟用 Teams 通知", value=st.session_state['notification_config']['teams_enabled'])
+                    teams_webhook = st.text_input(
+                        "Teams Webhook URL",
+                        value=st.session_state['notification_config']['teams_webhook'],
+                        type="password",
+                        help="請輸入 Microsoft Teams Incoming Webhook URL"
+                    )
+
+                    # Slack 設定
+                    slack_enabled = st.checkbox("啟用 Slack 通知", value=st.session_state['notification_config']['slack_enabled'])
+                    slack_webhook = st.text_input(
+                        "Slack Webhook URL",
+                        value=st.session_state['notification_config']['slack_webhook'],
+                        type="password",
+                        help="請輸入 Slack Incoming Webhook URL"
+                    )
+
+                    # Email 設定
+                    email_enabled = st.checkbox("啟用 Email 通知", value=st.session_state['notification_config']['email_enabled'])
+                    email_recipients = st.text_input(
+                        "Email 收件人 (逗號分隔)",
+                        value=st.session_state['notification_config']['email_recipients'],
+                        help="例如：user1@company.com,user2@company.com"
+                    )
+
+                    if st.button("💾 儲存通知設定"):
+                        st.session_state['notification_config'] = {
+                            'teams_enabled': teams_enabled,
+                            'teams_webhook': teams_webhook,
+                            'slack_enabled': slack_enabled,
+                            'slack_webhook': slack_webhook,
+                            'email_enabled': email_enabled,
+                            'email_recipients': email_recipients,
+                        }
+                        st.success("✅ 通知設定已儲存")
+
+                # 發送通知按鈕
+                notify_col1, notify_col2 = st.columns(2)
+
+                with notify_col1:
+                    if st.button("📊 發送週報", use_container_width=True):
+                        config = NotificationConfig()
+                        config.teams_enabled = st.session_state['notification_config']['teams_enabled']
+                        config.teams_webhook_url = st.session_state['notification_config']['teams_webhook']
+                        config.slack_enabled = st.session_state['notification_config']['slack_enabled']
+                        config.slack_webhook_url = st.session_state['notification_config']['slack_webhook']
+
+                        notifier = ProjectNotifier(config)
+                        notifier.send_weekly_report(report_content, project_info.get('project_name', 'OHTC 專案'))
+                        st.success("✅ 週報已發送！")
+
+                with notify_col2:
+                    if st.button("⚠️ 發送延遲警報", use_container_width=True):
+                        delay_tasks = df_tasks[df_tasks['status'] == 'Delay'].to_dict('records')
+                        if delay_tasks:
+                            config = NotificationConfig()
+                            config.teams_enabled = st.session_state['notification_config']['teams_enabled']
+                            config.teams_webhook_url = st.session_state['notification_config']['teams_webhook']
+                            config.slack_enabled = st.session_state['notification_config']['slack_enabled']
+                            config.slack_webhook_url = st.session_state['notification_config']['slack_webhook']
+
+                            notifier = ProjectNotifier(config)
+                            notifier.send_delay_alert(delay_tasks, project_info.get('project_name', 'OHTC 專案'))
+                            st.success(f"✅ 已發送 {len(delay_tasks)} 個延遲項目的警報！")
+                        else:
+                            st.info("💡 目前沒有延遲項目")
+
+                if st.button("📈 發送每日摘要", use_container_width=True):
+                    config = NotificationConfig()
+                    config.teams_enabled = st.session_state['notification_config']['teams_enabled']
+                    config.teams_webhook_url = st.session_state['notification_config']['teams_webhook']
+                    config.slack_enabled = st.session_state['notification_config']['slack_enabled']
+                    config.slack_webhook_url = st.session_state['notification_config']['slack_webhook']
+
+                    notifier = ProjectNotifier(config)
+                    notifier.send_daily_summary(summary, project_info.get('project_name', 'OHTC 專案'))
+                    st.success("✅ 每日摘要已發送！")
+            else:
+                st.warning("⚠️ 通知功能不可用：notifications.py 模組未找到")
+
     # Tab 8: 匯出
     with tab8:
         st.subheader("⬇️ 匯出資料")
