@@ -138,10 +138,25 @@ def load_excel_data(uploaded_file):
                 return default
 
         def safe_datetime(val):
+            """安全地轉換為日期時間，處理各種 Excel 日期格式"""
             try:
                 if pd.isna(val):
                     return None
-                return pd.to_datetime(val)
+
+                # 如果是字串且包含中文（可能是標題）
+                if isinstance(val, str):
+                    val_clean = str(val).strip()
+                    if any(ord(c) > 127 for c in val_clean):
+                        return None
+
+                # 嘗試轉換為 datetime
+                result = pd.to_datetime(val, errors='coerce')
+
+                # 如果轉換失敗，返回 None
+                if pd.isna(result):
+                    return None
+
+                return result
             except:
                 return None
 
@@ -198,7 +213,7 @@ def load_excel_data(uploaded_file):
                 item = {
                     'area': current_area,
                     'item': item_name,
-                    'target_date': row[1] if pd.notna(row[1]) else None,
+                    'target_date': safe_datetime(row[1]),  # 使用 safe_datetime 確保日期類型正確
                     'completion_pct': safe_float(row[2]),  # 使用 safe_float 而不是 float
                     'notes': str(row[3]) if pd.notna(row[3]) else '',
                     'is_area': '區域' in item_name,
@@ -1575,8 +1590,33 @@ def main():
                         'target_date': '目標日期', 'notes': '備註'
                     }
 
+                    # 準備編輯用的數據 - 確保數據類型正確
+                    area_tasks_for_edit = area_tasks[system_edit_columns].copy()
+
+                    # 確保 completion_pct 是 float 類型
+                    if 'completion_pct' in area_tasks_for_edit.columns:
+                        area_tasks_for_edit['completion_pct'] = pd.to_numeric(
+                            area_tasks_for_edit['completion_pct'],
+                            errors='coerce'
+                        ).fillna(0.0)
+
+                    # 確保 target_date 是 datetime 類型（可以為 None）
+                    if 'target_date' in area_tasks_for_edit.columns:
+                        # 嘗試轉換為 datetime，失敗則設為 None
+                        try:
+                            area_tasks_for_edit['target_date'] = pd.to_datetime(
+                                area_tasks_for_edit['target_date'],
+                                errors='coerce'
+                            )
+                        except:
+                            area_tasks_for_edit['target_date'] = None
+
+                    # 確保 notes 是字符串類型
+                    if 'notes' in area_tasks_for_edit.columns:
+                        area_tasks_for_edit['notes'] = area_tasks_for_edit['notes'].fillna('').astype(str)
+
                     edited_system_df = st.data_editor(
-                        area_tasks[system_edit_columns].rename(columns=system_column_names),
+                        area_tasks_for_edit.rename(columns=system_column_names),
                         column_config={
                             "區域": st.column_config.TextColumn("區域", disabled=True, width="medium"),
                             "完成百分比": st.column_config.NumberColumn(
