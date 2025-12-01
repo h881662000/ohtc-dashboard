@@ -275,6 +275,11 @@ def create_gantt_chart(df_tasks, show_actual=False):
 
     fig = go.Figure()
 
+    # 記錄處理狀態
+    success_count = 0
+    error_count = 0
+    error_messages = []
+
     # 計劃時程
     for idx, row in gantt_data.iterrows():
         try:
@@ -296,8 +301,23 @@ def create_gantt_chart(df_tasks, show_actual=False):
                              f"負責: {row['owner']}<extra></extra>",
                 showlegend=False,
             ))
+            success_count += 1
         except Exception as e:
+            error_count += 1
+            if error_count <= 3:  # 只記錄前 3 個錯誤
+                error_messages.append(f"任務 '{row['task']}': {str(e)}")
             continue  # 跳過有問題的資料
+
+    # 如果沒有成功添加任何任務，返回 None
+    if success_count == 0:
+        if 'gantt_chart_error_info' not in st.session_state:
+            st.session_state['gantt_chart_error_info'] = {
+                'total': len(gantt_data),
+                'success': success_count,
+                'error': error_count,
+                'messages': error_messages
+            }
+        return None
 
     # 實際時程（如果有）
     if show_actual:
@@ -1063,6 +1083,22 @@ def main():
         else:
             st.warning("⚠️ 資料不足，無法生成甘特圖")
             st.info("💡 甘特圖需要任務包含「計劃開始日期」和「計劃完成日期」。請檢查 Excel 的 I 欄和 J 欄是否有填寫日期。")
+
+            # 顯示錯誤詳情
+            if 'gantt_chart_error_info' in st.session_state:
+                error_info = st.session_state['gantt_chart_error_info']
+                st.error(f"""
+                **甘特圖生成失敗詳情：**
+                - 有日期的任務數：{error_info['total']}
+                - 成功處理：{error_info['success']}
+                - 處理失敗：{error_info['error']}
+                """)
+                if error_info['messages']:
+                    st.write("**前 3 個錯誤範例：**")
+                    for msg in error_info['messages']:
+                        st.write(f"- {msg}")
+                # 清除錯誤訊息
+                del st.session_state['gantt_chart_error_info']
     
     # Tab 2: 統計分析
     with tab2:
