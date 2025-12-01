@@ -1137,7 +1137,8 @@ def main():
                 default=['Done', 'Going', 'Delay'] if show_completed else ['Going', 'Delay']
             )
         with col2:
-            owners = sorted(df_tasks['owner'].unique().tolist())
+            # 安全地獲取負責單位列表（移除 NaN 和空值）
+            owners = sorted([str(x) for x in df_tasks['owner'].dropna().unique() if str(x).strip()])
             owner_filter = st.multiselect("篩選負責單位", options=owners)
         with col3:
             search = st.text_input("🔍 搜尋任務")
@@ -1241,7 +1242,8 @@ def main():
                 key="status_filter_edit"
             )
         with filter_col2:
-            owners_list = sorted(st.session_state['edited_all_tasks']['owner'].dropna().unique().tolist())
+            # 安全地獲取負責單位列表（移除 NaN 和空值）
+            owners_list = sorted([str(x) for x in st.session_state['edited_all_tasks']['owner'].dropna().unique() if str(x).strip()])
             owner_filter_edit = st.multiselect("篩選負責單位", options=owners_list, key="owner_filter_edit")
         with filter_col3:
             search_edit = st.text_input("🔍 搜尋任務關鍵字", key="search_edit")
@@ -1272,7 +1274,7 @@ def main():
             ]
 
         # 獲取所有現有的負責單位（用於下拉選單）
-        existing_owners = sorted(st.session_state['edited_all_tasks']['owner'].dropna().unique().tolist())
+        existing_owners = [str(x) for x in st.session_state['edited_all_tasks']['owner'].dropna().unique() if str(x).strip()]
         # 加入常用單位作為預設選項
         common_owners = ['TIM SMA', 'TIM Controls', 'TIM Mechanical', 'TIM Electrical', 'Vendor']
         owner_options = sorted(list(set(existing_owners + common_owners)))
