@@ -320,7 +320,8 @@ def create_gantt_chart(df_tasks, show_actual=False):
         xaxis_title='日期',
         yaxis_title='',
         barmode='overlay',
-        yaxis={'categoryorder': 'total ascending'},
+        yaxis={'categoryorder': 'trace'},  # 改為 'trace' 以保持 Excel 中的順序（從上到下）
+        yaxis_autorange='reversed',  # 反轉 y 軸，使第一個任務在最上面
         xaxis={'type': 'date'},
     )
 
@@ -836,7 +837,7 @@ def main():
         st.divider()
         
         st.header("⚙️ 顯示設定")
-        show_actual = st.checkbox("顯示實際進度", value=False)
+        show_actual = st.checkbox("顯示實際進度", value=True)
         show_completed = st.checkbox("顯示已完成項目", value=True)
         
         st.divider()
@@ -1704,8 +1705,6 @@ def main():
                     st.session_state['notification_config'] = {
                         'teams_enabled': False,
                         'teams_webhook': '',
-                        'slack_enabled': False,
-                        'slack_webhook': '',
                         'email_enabled': False,
                         'email_recipients': '',
                     }
@@ -1720,15 +1719,6 @@ def main():
                         help="請輸入 Microsoft Teams Incoming Webhook URL"
                     )
 
-                    # Slack 設定
-                    slack_enabled = st.checkbox("啟用 Slack 通知", value=st.session_state['notification_config']['slack_enabled'])
-                    slack_webhook = st.text_input(
-                        "Slack Webhook URL",
-                        value=st.session_state['notification_config']['slack_webhook'],
-                        type="password",
-                        help="請輸入 Slack Incoming Webhook URL"
-                    )
-
                     # Email 設定
                     email_enabled = st.checkbox("啟用 Email 通知", value=st.session_state['notification_config']['email_enabled'])
                     email_recipients = st.text_input(
@@ -1741,8 +1731,6 @@ def main():
                         st.session_state['notification_config'] = {
                             'teams_enabled': teams_enabled,
                             'teams_webhook': teams_webhook,
-                            'slack_enabled': slack_enabled,
-                            'slack_webhook': slack_webhook,
                             'email_enabled': email_enabled,
                             'email_recipients': email_recipients,
                         }
@@ -1756,8 +1744,6 @@ def main():
                         config = NotificationConfig()
                         config.teams_enabled = st.session_state['notification_config']['teams_enabled']
                         config.teams_webhook_url = st.session_state['notification_config']['teams_webhook']
-                        config.slack_enabled = st.session_state['notification_config']['slack_enabled']
-                        config.slack_webhook_url = st.session_state['notification_config']['slack_webhook']
 
                         notifier = ProjectNotifier(config)
                         notifier.send_weekly_report(report_content, project_info.get('project_name', 'OHTC 專案'))
@@ -1770,8 +1756,6 @@ def main():
                             config = NotificationConfig()
                             config.teams_enabled = st.session_state['notification_config']['teams_enabled']
                             config.teams_webhook_url = st.session_state['notification_config']['teams_webhook']
-                            config.slack_enabled = st.session_state['notification_config']['slack_enabled']
-                            config.slack_webhook_url = st.session_state['notification_config']['slack_webhook']
 
                             notifier = ProjectNotifier(config)
                             notifier.send_delay_alert(delay_tasks, project_info.get('project_name', 'OHTC 專案'))
@@ -1783,8 +1767,6 @@ def main():
                     config = NotificationConfig()
                     config.teams_enabled = st.session_state['notification_config']['teams_enabled']
                     config.teams_webhook_url = st.session_state['notification_config']['teams_webhook']
-                    config.slack_enabled = st.session_state['notification_config']['slack_enabled']
-                    config.slack_webhook_url = st.session_state['notification_config']['slack_webhook']
 
                     notifier = ProjectNotifier(config)
                     notifier.send_daily_summary(summary, project_info.get('project_name', 'OHTC 專案'))
