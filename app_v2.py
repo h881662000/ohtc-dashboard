@@ -994,6 +994,45 @@ def export_report_to_word_format(report_content):
     return report_content
 
 
+def generate_export_filename(original_filename, project_name):
+    """
+    生成匯出檔案名稱
+    格式：專案名稱+安裝排程表+_日期+_v版號(原版號+1)
+
+    Args:
+        original_filename: 原始上傳的檔案名稱
+        project_name: 專案名稱
+
+    Returns:
+        新的檔案名稱字串
+    """
+    import re
+    from datetime import datetime
+
+    # 從原始檔案名提取版號
+    version = 1
+    if original_filename:
+        # 嘗試匹配 _v數字 或 _V數字 格式
+        version_match = re.search(r'_[vV](\d+)', original_filename)
+        if version_match:
+            version = int(version_match.group(1)) + 1
+        else:
+            # 如果沒有版號，檢查檔案名中是否有日期後的其他數字
+            # 例如：PTI_PH2_OHTC安裝排程表_20251201.xlsx -> v1
+            version = 1
+
+    # 清理專案名稱（移除可能的特殊字符）
+    clean_project_name = re.sub(r'[\\/:*?"<>|]', '', project_name) if project_name else 'OHTC'
+
+    # 生成日期字串
+    date_str = datetime.now().strftime('%Y%m%d')
+
+    # 組合檔案名稱：專案名稱+安裝排程表+_日期+_v版號
+    new_filename = f"{clean_project_name}_安裝排程表_{date_str}_v{version}.xlsx"
+
+    return new_filename
+
+
 # ============================================================
 # 主應用程式
 # ============================================================
@@ -2143,13 +2182,19 @@ def main():
 
                     excel_output = export_updated_excel(export_data, uploaded_file, tasks_to_export)
 
+                    # 生成檔案名稱：專案名稱+安裝排程表+_日期+_v版號
+                    export_filename = generate_export_filename(
+                        uploaded_file.name,
+                        project_to_export.get('project_name', 'OHTC')
+                    )
+
                     st.download_button(
                         label="⬇️ 下載 Excel",
                         data=excel_output,
-                        file_name=f"OHTC_排程表_更新_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                        file_name=export_filename,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
-                    st.success("✅ Excel 已生成（包含所有編輯）")
+                    st.success(f"✅ Excel 已生成：{export_filename}")
                 except Exception as e:
                     st.error(f"匯出失敗: {str(e)}")
                     st.exception(e)
