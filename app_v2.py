@@ -94,9 +94,16 @@ st.markdown("""
 def load_excel_data(uploaded_file):
     """載入 Excel 檔案並解析各工作表"""
     try:
+        from openpyxl import load_workbook
+
         xl = pd.ExcelFile(uploaded_file)
         sheet_names = xl.sheet_names
-        
+
+        # 使用 openpyxl 讀取格式資訊（背景色）
+        uploaded_file.seek(0)  # 重置檔案指標
+        wb = load_workbook(uploaded_file, data_only=False)
+        ws_software = wb['軟體時程']
+
         # 讀取軟體時程表
         df_software = pd.read_excel(uploaded_file, sheet_name='軟體時程', header=None)
         
@@ -180,14 +187,37 @@ def load_excel_data(uploaded_file):
                 if isinstance(row[4], str) and ('百分比' in str(row[4]) or '完成' in str(row[4])):
                     continue
 
-                # 判斷任務層級（大項目 vs 子項目）
-                # 方法 1：檢查編號模式（如 1. vs 1.1）
-                # 方法 2：大項目通常沒有負責單位、沒有具體日期
-                owner = str(row[2]) if pd.notna(row[2]) else ''
-                has_dates = pd.notna(row[8]) and pd.notna(row[9])
+                # 判斷任務層級（使用 Excel 背景色）
+                # openpyxl 的行索引從 1 開始，且我們從第 7 行開始讀（i=6 對應 Excel 第 7 行）
+                excel_row = i + 1
+                cell_a = ws_software.cell(row=excel_row, column=1)  # A 欄
 
-                # 如果沒有負責單位且沒有具體日期，很可能是大項目
-                is_parent = (not owner or owner.strip() == '') and not has_dates
+                # 檢查背景色（綠色背景 = 大項目）
+                is_parent = False
+                if cell_a.fill and cell_a.fill.start_color:
+                    color = cell_a.fill.start_color.rgb
+                    # 綠色背景（RGB 類似 92D050 或其他綠色）
+                    if color and len(str(color)) >= 6:
+                        # 提取 RGB 值（格式可能是 FF92D050 或 92D050）
+                        color_str = str(color)[-6:]  # 取最後 6 位
+                        # 檢查是否為綠色系（G 值較高）
+                        try:
+                            r = int(color_str[0:2], 16)
+                            g = int(color_str[2:4], 16)
+                            b = int(color_str[4:6], 16)
+                            # 綠色：G > R 且 G > B，且 G > 150
+                            is_parent = g > r and g > b and g > 150
+                        except:
+                            pass
+
+                # 如果背景色判斷失敗，使用原始邏輯
+                if not is_parent:
+                    owner = str(row[2]) if pd.notna(row[2]) else ''
+                    has_dates = pd.notna(row[8]) and pd.notna(row[9])
+                    # 如果沒有負責單位且沒有具體日期，很可能是大項目
+                    is_parent = (not owner or owner.strip() == '') and not has_dates
+
+                owner = str(row[2]) if pd.notna(row[2]) else ''
 
                 task = {
                     'id': len(tasks) + 1,
@@ -1264,6 +1294,9 @@ def main():
     with tab5:
         st.subheader("✏️ 專案與任務編輯器")
 
+        # 提示：篩選與操作說明
+        st.info("💡 **使用提示：** 篩選與搜尋不會跳頁，但執行操作（如新增、批量修改）後會重新載入，此時可能回到甘特圖頁面。修改完成後請前往「匯出」分頁儲存變更。")
+
         # 初始化編輯歷史（用於撤銷/重做）
         if 'edit_history' not in st.session_state:
             st.session_state['edit_history'] = []
@@ -1335,8 +1368,11 @@ def main():
         with filter_col3:
             search_edit = st.text_input("🔍 搜尋任務關鍵字", key="search_edit")
         with filter_col4:
-            clear_filter = st.button("🔄 清除篩選", use_container_width=True)
-            if clear_filter:
+            if st.button("🔄 清除篩選", use_container_width=True):
+                # 清除篩選條件（透過設定 key 的方式強制重設）
+                for key in ['status_filter_edit', 'owner_filter_edit', 'search_edit']:
+                    if key in st.session_state:
+                        del st.session_state[key]
                 st.rerun()
 
         st.divider()
@@ -1506,10 +1542,10 @@ def main():
         # 顯示篩選結果數量
         st.caption(f"📊 顯示 {len(filtered_tasks)} / {len(st.session_state['edited_all_tasks'])} 個任務")
 
-        # 準備顯示用的資料（加入層級標記）
+        # 準備顯示用的資料（加入層級標記，與 Excel 一致）
         display_tasks = filtered_tasks.copy()
         display_tasks['task_display'] = display_tasks.apply(
-            lambda row: f"📁 {row['task']}" if row.get('is_parent', False) else f"  └─ {row['task']}",
+            lambda row: f"【{row['task']}】" if row.get('is_parent', False) else f"    {row['task']}",
             axis=1
         )
 
@@ -1567,7 +1603,7 @@ def main():
                 # 清理任務名稱（移除層級標記）
                 if 'task_display' in edited_tasks_df_copy.columns:
                     edited_tasks_df_copy['task'] = edited_tasks_df_copy['task_display'].apply(
-                        lambda x: str(x).replace('📁 ', '').replace('  └─ ', '').strip() if pd.notna(x) else ''
+                        lambda x: str(x).replace('【', '').replace('】', '').strip() if pd.notna(x) else ''
                     )
                     edited_tasks_df_copy = edited_tasks_df_copy.drop(columns=['task_display'])
 
