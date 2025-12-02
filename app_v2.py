@@ -180,11 +180,21 @@ def load_excel_data(uploaded_file):
                 if isinstance(row[4], str) and ('百分比' in str(row[4]) or '完成' in str(row[4])):
                     continue
 
+                # 判斷任務層級（大項目 vs 子項目）
+                # 方法 1：檢查編號模式（如 1. vs 1.1）
+                # 方法 2：大項目通常沒有負責單位、沒有具體日期
+                owner = str(row[2]) if pd.notna(row[2]) else ''
+                has_dates = pd.notna(row[8]) and pd.notna(row[9])
+
+                # 如果沒有負責單位且沒有具體日期，很可能是大項目
+                is_parent = (not owner or owner.strip() == '') and not has_dates
+
                 task = {
                     'id': len(tasks) + 1,
                     'row_index': i,
                     'task': str(task_name).strip(),
-                    'owner': str(row[2]) if pd.notna(row[2]) else '',
+                    'is_parent': is_parent,  # 新增：標記是否為大項目
+                    'owner': owner,
                     'progress_pct': safe_float(row[4]),
                     'target_pct': safe_float(row[5]),
                     'remaining_days': safe_int(row[6]),
@@ -219,11 +229,17 @@ def load_excel_data(uploaded_file):
                 if '區域' in item_name:
                     current_area = item_name
 
+                # 讀取完成百分比（自動判斷 0-1 或 0-100 格式）
+                pct = safe_float(row[2])
+                if pct is not None and pct <= 1:
+                    # Excel 儲存為 0-1 格式，轉換為 0-100
+                    pct = pct * 100
+
                 item = {
                     'area': current_area,
                     'item': item_name,
                     'target_date': safe_datetime(row[1]),  # 使用 safe_datetime 確保日期類型正確
-                    'completion_pct': safe_float(row[2]),  # 使用 safe_float 而不是 float
+                    'completion_pct': pct,
                     'notes': str(row[3]) if pd.notna(row[3]) else '',
                     'is_area': '區域' in item_name,
                 }
@@ -1092,12 +1108,11 @@ def main():
     st.divider()
     
     # 主要標籤頁
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "📅 甘特圖",
         "📊 統計分析",
         "⚠️ 風險追蹤",
         "🏭 區域進度",
-        "📋 任務管理",
         "✏️ 專案編輯",
         "📝 週報生成",
         "⬇️ 匯出"
@@ -1245,57 +1260,8 @@ def main():
                         </div>
                         """, unsafe_allow_html=True)
     
-    # Tab 5: 任務管理
+    # Tab 5: 專案編輯
     with tab5:
-        st.subheader("📋 任務管理與編輯")
-        
-        # 篩選器
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            status_filter = st.multiselect(
-                "篩選狀態",
-                options=['Done', 'Going', 'Delay'],
-                default=['Done', 'Going', 'Delay'] if show_completed else ['Going', 'Delay']
-            )
-        with col2:
-            # 安全地獲取負責單位列表（移除 NaN 和空值）
-            owners = sorted([str(x) for x in df_tasks['owner'].dropna().unique() if str(x).strip()])
-            owner_filter = st.multiselect("篩選負責單位", options=owners)
-        with col3:
-            search = st.text_input("🔍 搜尋任務")
-        
-        # 套用篩選
-        filtered_df = df_tasks[df_tasks['status'].isin(status_filter)].copy()
-        if owner_filter:
-            filtered_df = filtered_df[filtered_df['owner'].isin(owner_filter)]
-        if search:
-            filtered_df = filtered_df[filtered_df['task'].str.contains(search, case=False, na=False)]
-        
-        # 可編輯表格
-        edited_df = st.data_editor(
-            filtered_df[['id', 'task', 'owner', 'status', 'plan_start', 'plan_end', 'variance_days', 'notes']].rename(columns={
-                'id': 'ID', 'task': '任務', 'owner': '負責單位', 'status': '狀態',
-                'plan_start': '計劃開始', 'plan_end': '計劃完成', 'variance_days': '誤差天數', 'notes': '備註'
-            }),
-            column_config={
-                "狀態": st.column_config.SelectboxColumn(options=["Done", "Going", "Delay"]),
-                "計劃開始": st.column_config.DateColumn(format="YYYY-MM-DD"),
-                "計劃完成": st.column_config.DateColumn(format="YYYY-MM-DD"),
-            },
-            use_container_width=True,
-            hide_index=True,
-            num_rows="fixed",
-        )
-        
-        st.caption(f"顯示 {len(filtered_df)} / {len(df_tasks)} 筆資料")
-        
-        # 儲存變更提示
-        if st.button("💾 套用變更", type="primary"):
-            st.success("✅ 變更已記錄，請至「匯出」頁面下載更新後的 Excel")
-            st.session_state['edited_tasks'] = edited_df
-
-    # Tab 6: 專案編輯
-    with tab6:
         st.subheader("✏️ 專案與任務編輯器")
 
         # 初始化編輯歷史（用於撤銷/重做）
@@ -1540,29 +1506,36 @@ def main():
         # 顯示篩選結果數量
         st.caption(f"📊 顯示 {len(filtered_tasks)} / {len(st.session_state['edited_all_tasks'])} 個任務")
 
+        # 準備顯示用的資料（加入層級標記）
+        display_tasks = filtered_tasks.copy()
+        display_tasks['task_display'] = display_tasks.apply(
+            lambda row: f"📁 {row['task']}" if row.get('is_parent', False) else f"  └─ {row['task']}",
+            axis=1
+        )
+
         # 可編輯的任務表格
         if show_all:
             # 顯示所有欄位
-            edit_columns = ['id', 'task', 'owner', 'status', 'plan_start', 'plan_end',
+            edit_columns = ['id', 'task_display', 'owner', 'status', 'plan_start', 'plan_end',
                           'plan_days', 'actual_start', 'actual_end', 'progress_pct',
                           'variance_days', 'notes']
             column_names = {
-                'id': 'ID', 'task': '任務名稱', 'owner': '負責單位', 'status': '狀態',
+                'id': 'ID', 'task_display': '任務名稱', 'owner': '負責單位', 'status': '狀態',
                 'plan_start': '計劃開始', 'plan_end': '計劃完成', 'plan_days': '計劃天數',
                 'actual_start': '實際開始', 'actual_end': '實際完成',
                 'progress_pct': '完成%', 'variance_days': '誤差天數', 'notes': '備註'
             }
         else:
             # 只顯示主要欄位
-            edit_columns = ['id', 'task', 'owner', 'status', 'plan_start', 'plan_end', 'notes']
+            edit_columns = ['id', 'task_display', 'owner', 'status', 'plan_start', 'plan_end', 'notes']
             column_names = {
-                'id': 'ID', 'task': '任務名稱', 'owner': '負責單位', 'status': '狀態',
+                'id': 'ID', 'task_display': '任務名稱', 'owner': '負責單位', 'status': '狀態',
                 'plan_start': '計劃開始', 'plan_end': '計劃完成', 'notes': '備註'
             }
 
         # 可編輯的任務表格
         edited_tasks_df = st.data_editor(
-            filtered_tasks[edit_columns].rename(columns=column_names),
+            display_tasks[edit_columns].rename(columns=column_names),
             column_config={
                 "ID": st.column_config.NumberColumn("ID", disabled=True, width="small"),
                 "任務名稱": st.column_config.TextColumn("任務名稱", width="large"),
@@ -1590,6 +1563,13 @@ def main():
                 # 還原欄位名稱
                 reverse_column_names = {v: k for k, v in column_names.items()}
                 edited_tasks_df_copy = edited_tasks_df.rename(columns=reverse_column_names)
+
+                # 清理任務名稱（移除層級標記）
+                if 'task_display' in edited_tasks_df_copy.columns:
+                    edited_tasks_df_copy['task'] = edited_tasks_df_copy['task_display'].apply(
+                        lambda x: str(x).replace('📁 ', '').replace('  └─ ', '').strip() if pd.notna(x) else ''
+                    )
+                    edited_tasks_df_copy = edited_tasks_df_copy.drop(columns=['task_display'])
 
                 # ========== 資料驗證 ==========
                 validation_errors = []
@@ -1745,10 +1725,10 @@ def main():
                             "完成百分比": st.column_config.NumberColumn(
                                 "完成百分比",
                                 min_value=0,
-                                max_value=1,
-                                format="%.2f",
+                                max_value=100,
+                                format="%.1f%%",
                                 width="small",
-                                help="輸入 0-1 之間的數值（例如：0.75 代表 75%）"
+                                help="輸入 0-100 之間的數值（例如：75 代表 75%）"
                             ),
                             "目標日期": st.column_config.DateColumn("目標日期", format="YYYY-MM-DD"),
                             "備註": st.column_config.TextColumn("備註", width="large"),
@@ -1785,8 +1765,8 @@ def main():
         else:
             st.warning("⚠️ 未偵測到系統時程資料")
 
-    # Tab 7: 週報生成
-    with tab7:
+    # Tab 6: 週報生成
+    with tab6:
         st.subheader("📝 專案週報生成")
         
         col1, col2 = st.columns([2, 1])
@@ -1894,8 +1874,8 @@ def main():
             else:
                 st.warning("⚠️ 通知功能不可用：notifications.py 模組未找到")
 
-    # Tab 8: 匯出
-    with tab8:
+    # Tab 7: 匯出
+    with tab7:
         st.subheader("⬇️ 匯出資料")
 
         # 檢查是否有編輯過的資料
