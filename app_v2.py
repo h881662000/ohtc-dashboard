@@ -187,43 +187,78 @@ def load_excel_data(uploaded_file):
                 if isinstance(row[4], str) and ('百分比' in str(row[4]) or '完成' in str(row[4])):
                     continue
 
-                # 判斷任務層級（使用 Excel 背景色）
-                # openpyxl 的行索引從 1 開始，且我們從第 7 行開始讀（i=6 對應 Excel 第 7 行）
-                excel_row = i + 1
-                cell_a = ws_software.cell(row=excel_row, column=1)  # A 欄
-
-                # 檢查背景色（綠色背景 = 大項目）
-                is_parent = False
-                if cell_a.fill and cell_a.fill.start_color:
-                    color = cell_a.fill.start_color.rgb
-                    # 綠色背景（RGB 類似 92D050 或其他綠色）
-                    if color and len(str(color)) >= 6:
-                        # 提取 RGB 值（格式可能是 FF92D050 或 92D050）
-                        color_str = str(color)[-6:]  # 取最後 6 位
-                        # 檢查是否為綠色系（G 值較高）
-                        try:
-                            r = int(color_str[0:2], 16)
-                            g = int(color_str[2:4], 16)
-                            b = int(color_str[4:6], 16)
-                            # 綠色：G > R 且 G > B，且 G > 150
-                            is_parent = g > r and g > b and g > 150
-                        except:
-                            pass
-
-                # 如果背景色判斷失敗，使用原始邏輯
-                if not is_parent:
-                    owner = str(row[2]) if pd.notna(row[2]) else ''
-                    has_dates = pd.notna(row[8]) and pd.notna(row[9])
-                    # 如果沒有負責單位且沒有具體日期，很可能是大項目
-                    is_parent = (not owner or owner.strip() == '') and not has_dates
-
+                # ========== 判斷任務層級（多重方法）==========
                 owner = str(row[2]) if pd.notna(row[2]) else ''
+                task_name_str = str(task_name).strip()
+
+                # 方法 1：檢查任務名稱是否有前導空格（Excel 中子項目可能縮排）
+                has_leading_space = str(row[0]).startswith(' ') or str(row[0]).startswith('\t')
+
+                # 方法 2：檢查 B 欄（索引 1）的層級標記
+                level_marker = str(row[1]).strip() if pd.notna(row[1]) else ''
+
+                # 判斷層級（支援多層級）
+                level = 0  # 0=主項目, 1=次項目, 2=次次項目...
+                if level_marker in ['主項目', '1', '大項', '大項目', 'parent', 'Parent']:
+                    level = 0
+                    is_parent_by_marker = True
+                elif level_marker in ['次項目', '2', '子項', '子項目', 'child', 'Child']:
+                    level = 1
+                    is_parent_by_marker = False
+                elif level_marker in ['次次項目', '3', '孫項', '孫項目']:
+                    level = 2
+                    is_parent_by_marker = False
+                else:
+                    is_parent_by_marker = False
+                    # 如果沒有明確標記，嘗試從數字推斷層級
+                    try:
+                        level_num = int(level_marker)
+                        if level_num > 0:
+                            level = level_num - 1  # 1->0, 2->1, 3->2
+                            is_parent_by_marker = (level_num == 1)
+                    except:
+                        pass
+
+                # 方法 3：使用 Excel 背景色
+                is_parent_by_color = False
+                try:
+                    excel_row = i + 1  # openpyxl 行索引從 1 開始
+                    cell_a = ws_software.cell(row=excel_row, column=1)
+                    if cell_a.fill and cell_a.fill.start_color:
+                        color = cell_a.fill.start_color.rgb
+                        if color and len(str(color)) >= 6:
+                            color_str = str(color)[-6:]
+                            try:
+                                r = int(color_str[0:2], 16)
+                                g = int(color_str[2:4], 16)
+                                b = int(color_str[4:6], 16)
+                                # 綠色：G > R 且 G > B，且 G > 150
+                                is_parent_by_color = g > r and g > b and g > 150
+                            except:
+                                pass
+                except:
+                    pass
+
+                # 方法 4：無負責單位 + 無日期
+                has_dates = pd.notna(row[8]) and pd.notna(row[9])
+                is_parent_by_logic = (not owner or owner.strip() == '') and not has_dates
+
+                # 綜合判斷（優先級：層級標記 > 背景色 > 縮排 > 邏輯判斷）
+                if is_parent_by_marker:
+                    is_parent = True
+                elif is_parent_by_color:
+                    is_parent = True
+                elif has_leading_space:
+                    is_parent = False  # 有縮排 = 子項目
+                else:
+                    is_parent = is_parent_by_logic
 
                 task = {
                     'id': len(tasks) + 1,
                     'row_index': i,
                     'task': str(task_name).strip(),
-                    'is_parent': is_parent,  # 新增：標記是否為大項目
+                    'is_parent': is_parent,  # 標記是否為大項目（主項目）
+                    'level': level,  # 層級：0=主項目, 1=次項目, 2=次次項目
                     'owner': owner,
                     'progress_pct': safe_float(row[4]),
                     'target_pct': safe_float(row[5]),
@@ -972,6 +1007,37 @@ def main():
             except Exception as e:
                 st.error(f"無法讀取原始資料：{e}")
 
+        # 層級識別診斷
+        with st.expander("🔬 層級識別診斷（Debug）", expanded=False):
+            st.info("""
+            💡 **如何改善層級識別？** 請參考 `EXCEL_FORMAT_GUIDE.md` 文檔
+
+            **推薦方法：**
+            1. **B 欄標記**：在 B 欄填入 `1` 標記大項目
+            2. **空格縮排**：子項目名稱前加 4 個空格
+            3. **綠色背景**：大項目設定綠色背景（目前方式）
+            """)
+
+            st.write("**前 10 個任務的層級判斷：**")
+            debug_data = []
+            level_names = {0: '主項目', 1: '次項目', 2: '次次項目'}
+
+            for idx, row in df_tasks.head(10).iterrows():
+                level = row.get('level', 0)
+                level_display = level_names.get(level, f'層級{level+1}')
+
+                debug_data.append({
+                    'ID': row['id'],
+                    '任務名稱': row['task'][:30] + '...' if len(row['task']) > 30 else row['task'],
+                    '層級': level_display,
+                    '視覺化': f"{'  ' * level}{'■' if level == 0 else '├─'} {row['task'][:20]}"[:35],
+                    '負責單位': (row['owner'][:10] + '...') if len(str(row['owner'])) > 10 else row['owner'] if row['owner'] else '(無)',
+                    '有日期': '✅' if pd.notna(row['plan_start']) and pd.notna(row['plan_end']) else '❌'
+                })
+            st.dataframe(pd.DataFrame(debug_data), use_container_width=True)
+
+            st.caption("⚠️ 如果判斷不正確，請修改 Excel 格式（參考上方說明）或聯繫開發者")
+
         st.divider()
 
         # 新專案範本生成器
@@ -1412,6 +1478,8 @@ def main():
                     'id': len(st.session_state['edited_all_tasks']) + 1,
                     'row_index': len(st.session_state['edited_all_tasks']) + 6,
                     'task': '新任務',
+                    'is_parent': False,  # 預設為子項目
+                    'level': 1,  # 預設為次項目
                     'owner': '',
                     'progress_pct': 0,
                     'target_pct': 0,
@@ -1544,10 +1612,27 @@ def main():
 
         # 準備顯示用的資料（加入層級標記，與 Excel 一致）
         display_tasks = filtered_tasks.copy()
-        display_tasks['task_display'] = display_tasks.apply(
-            lambda row: f"【{row['task']}】" if row.get('is_parent', False) else f"    {row['task']}",
-            axis=1
-        )
+
+        def format_task_with_level(row):
+            """根據層級格式化任務名稱"""
+            level = row.get('level', 0)
+            task_name = row['task']
+
+            if level == 0:
+                # 主項目
+                return f"■ {task_name}"
+            elif level == 1:
+                # 次項目
+                return f"  ├─ {task_name}"
+            elif level == 2:
+                # 次次項目
+                return f"    └─ {task_name}"
+            else:
+                # 更深層級
+                indent = "  " * level
+                return f"{indent}└─ {task_name}"
+
+        display_tasks['task_display'] = display_tasks.apply(format_task_with_level, axis=1)
 
         # 可編輯的任務表格
         if show_all:
@@ -1602,9 +1687,18 @@ def main():
 
                 # 清理任務名稱（移除層級標記）
                 if 'task_display' in edited_tasks_df_copy.columns:
-                    edited_tasks_df_copy['task'] = edited_tasks_df_copy['task_display'].apply(
-                        lambda x: str(x).replace('【', '').replace('】', '').strip() if pd.notna(x) else ''
-                    )
+                    def clean_task_name(x):
+                        if pd.isna(x):
+                            return ''
+                        # 移除所有層級符號
+                        cleaned = str(x)
+                        cleaned = cleaned.replace('■ ', '')  # 主項目
+                        cleaned = cleaned.replace('├─ ', '')  # 次項目
+                        cleaned = cleaned.replace('└─ ', '')  # 次次項目
+                        cleaned = cleaned.strip()
+                        return cleaned
+
+                    edited_tasks_df_copy['task'] = edited_tasks_df_copy['task_display'].apply(clean_task_name)
                     edited_tasks_df_copy = edited_tasks_df_copy.drop(columns=['task_display'])
 
                 # ========== 資料驗證 ==========
