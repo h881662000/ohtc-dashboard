@@ -322,7 +322,29 @@ def load_excel_data(uploaded_file):
             df_eq = pd.read_excel(uploaded_file, sheet_name='EQ 工作清單', header=None)
         except:
             df_eq = pd.DataFrame()
-        
+
+        # 讀取 Layout 分頁的圖片
+        layout_images = []
+        try:
+            if 'Layout' in sheet_names:
+                ws_layout = wb['Layout']
+                if hasattr(ws_layout, '_images'):
+                    for img in ws_layout._images:
+                        try:
+                            # 提取圖片資訊
+                            import io
+                            image_data = {
+                                'data': img.ref.getvalue() if hasattr(img.ref, 'getvalue') else None,
+                                'anchor': str(img.anchor) if hasattr(img, 'anchor') else '',
+                                'format': img.format if hasattr(img, 'format') else 'png'
+                            }
+                            if image_data['data']:
+                                layout_images.append(image_data)
+                        except Exception as img_err:
+                            st.warning(f"讀取圖片時發生錯誤: {str(img_err)}")
+        except Exception as layout_err:
+            pass  # 如果沒有 Layout 分頁或無法讀取，就忽略
+
         return {
             'project_info': project_info,
             'tasks': df_tasks,
@@ -331,6 +353,7 @@ def load_excel_data(uploaded_file):
             'eq_list': df_eq,
             'raw_software': df_software,
             'sheet_names': sheet_names,
+            'layout_images': layout_images,
         }
     except Exception as e:
         st.error(f"載入檔案錯誤: {str(e)}")
@@ -1428,7 +1451,7 @@ def main():
 
         # 篩選器
         st.markdown("**🔍 篩選與搜尋：**")
-        filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
+        filter_col1, filter_col2, filter_col3, filter_col4, filter_col5 = st.columns(5)
         with filter_col1:
             status_filter_edit = st.multiselect(
                 "篩選狀態",
@@ -1441,11 +1464,19 @@ def main():
             owners_list = sorted([str(x) for x in st.session_state['edited_all_tasks']['owner'].dropna().unique() if str(x).strip()])
             owner_filter_edit = st.multiselect("篩選負責單位", options=owners_list, key="owner_filter_edit")
         with filter_col3:
-            search_edit = st.text_input("🔍 搜尋任務關鍵字", key="search_edit")
+            # 主項目篩選
+            parent_filter_edit = st.selectbox(
+                "篩選主項目",
+                options=['全部', '僅主項目', '僅次項目'],
+                index=0,
+                key="parent_filter_edit"
+            )
         with filter_col4:
+            search_edit = st.text_input("🔍 搜尋任務關鍵字", key="search_edit")
+        with filter_col5:
             if st.button("🔄 清除篩選", use_container_width=True):
                 # 清除篩選條件（透過設定 key 的方式強制重設）
-                for key in ['status_filter_edit', 'owner_filter_edit', 'search_edit']:
+                for key in ['status_filter_edit', 'owner_filter_edit', 'parent_filter_edit', 'search_edit']:
                     if key in st.session_state:
                         del st.session_state[key]
                 st.rerun()
@@ -1463,6 +1494,12 @@ def main():
         # 篩選負責單位
         if owner_filter_edit:
             filtered_tasks = filtered_tasks[filtered_tasks['owner'].isin(owner_filter_edit)]
+
+        # 篩選主項目
+        if parent_filter_edit == '僅主項目':
+            filtered_tasks = filtered_tasks[filtered_tasks['is_parent'] == True]
+        elif parent_filter_edit == '僅次項目':
+            filtered_tasks = filtered_tasks[filtered_tasks['is_parent'] == False]
 
         # 搜尋任務關鍵字
         if search_edit:
@@ -2022,6 +2059,49 @@ def main():
 
         if has_edits:
             st.info("💡 偵測到您在「專案編輯」分頁有進行修改，匯出將使用最新的編輯資料")
+
+        # 顯示額外分頁資料
+        st.markdown("### 📋 額外分頁資料預覽")
+
+        extra_tabs = []
+        if not data.get('engineering', pd.DataFrame()).empty:
+            extra_tabs.append("工程_工作進度確認表")
+        if not data.get('eq_list', pd.DataFrame()).empty:
+            extra_tabs.append("EQ 工作清單")
+        if data.get('layout_images') and len(data.get('layout_images', [])) > 0:
+            extra_tabs.append("Layout 圖片")
+
+        if extra_tabs:
+            extra_tab_objects = st.tabs(extra_tabs)
+
+            tab_idx = 0
+            if not data.get('engineering', pd.DataFrame()).empty:
+                with extra_tab_objects[tab_idx]:
+                    st.markdown("#### 🏗️ 工程_工作進度確認表")
+                    st.dataframe(data['engineering'], use_container_width=True, height=400)
+                tab_idx += 1
+
+            if not data.get('eq_list', pd.DataFrame()).empty:
+                with extra_tab_objects[tab_idx]:
+                    st.markdown("#### 🔧 EQ 工作清單")
+                    st.dataframe(data['eq_list'], use_container_width=True, height=400)
+                tab_idx += 1
+
+            if data.get('layout_images') and len(data.get('layout_images', [])) > 0:
+                with extra_tab_objects[tab_idx]:
+                    st.markdown("#### 🖼️ Layout 圖片")
+                    layout_images = data.get('layout_images', [])
+                    st.write(f"共找到 {len(layout_images)} 張圖片")
+                    for idx, img_data in enumerate(layout_images):
+                        try:
+                            st.image(img_data['data'], caption=f"Layout 圖片 {idx + 1}", use_container_width=True)
+                        except Exception as e:
+                            st.error(f"無法顯示圖片 {idx + 1}: {str(e)}")
+        else:
+            st.info("📝 此檔案中沒有「工程_工作進度確認表」、「EQ 工作清單」或「Layout 圖片」分頁")
+
+        st.divider()
+        st.markdown("### 💾 下載檔案")
 
         col1, col2, col3 = st.columns(3)
 
