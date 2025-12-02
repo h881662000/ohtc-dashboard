@@ -1007,36 +1007,45 @@ def main():
             except Exception as e:
                 st.error(f"無法讀取原始資料：{e}")
 
-        # 層級識別診斷
-        with st.expander("🔬 層級識別診斷（Debug）", expanded=False):
-            st.info("""
-            💡 **如何改善層級識別？** 請參考 `EXCEL_FORMAT_GUIDE.md` 文檔
+        # 層級識別診斷（需要在上傳檔案後才顯示）
+        if uploaded_file:
+            with st.expander("🔬 層級識別診斷（Debug）", expanded=False):
+                st.info("""
+                💡 **如何改善層級識別？** 請參考 `EXCEL_FORMAT_GUIDE.md` 文檔
 
-            **推薦方法：**
-            1. **B 欄標記**：在 B 欄填入 `1` 標記大項目
-            2. **空格縮排**：子項目名稱前加 4 個空格
-            3. **綠色背景**：大項目設定綠色背景（目前方式）
-            """)
+                **推薦方法：**
+                1. **B 欄標記**：在 B 欄填入 `主項目`、`次項目` 標記層級
+                2. **空格縮排**：子項目名稱前加 4 個空格
+                3. **綠色背景**：大項目設定綠色背景（目前方式）
+                """)
 
-            st.write("**前 10 個任務的層級判斷：**")
-            debug_data = []
-            level_names = {0: '主項目', 1: '次項目', 2: '次次項目'}
+                try:
+                    # 嘗試載入資料以顯示診斷
+                    temp_data = load_excel_data(uploaded_file)
+                    if temp_data and 'tasks' in temp_data:
+                        temp_df = temp_data['tasks']
 
-            for idx, row in df_tasks.head(10).iterrows():
-                level = row.get('level', 0)
-                level_display = level_names.get(level, f'層級{level+1}')
+                        st.write("**前 10 個任務的層級判斷：**")
+                        debug_data = []
+                        level_names = {0: '主項目', 1: '次項目', 2: '次次項目'}
 
-                debug_data.append({
-                    'ID': row['id'],
-                    '任務名稱': row['task'][:30] + '...' if len(row['task']) > 30 else row['task'],
-                    '層級': level_display,
-                    '視覺化': f"{'  ' * level}{'■' if level == 0 else '├─'} {row['task'][:20]}"[:35],
-                    '負責單位': (row['owner'][:10] + '...') if len(str(row['owner'])) > 10 else row['owner'] if row['owner'] else '(無)',
-                    '有日期': '✅' if pd.notna(row['plan_start']) and pd.notna(row['plan_end']) else '❌'
-                })
-            st.dataframe(pd.DataFrame(debug_data), use_container_width=True)
+                        for idx, row in temp_df.head(10).iterrows():
+                            level = row.get('level', 0)
+                            level_display = level_names.get(level, f'層級{level+1}')
 
-            st.caption("⚠️ 如果判斷不正確，請修改 Excel 格式（參考上方說明）或聯繫開發者")
+                            debug_data.append({
+                                'ID': row['id'],
+                                '任務名稱': row['task'][:30] + '...' if len(row['task']) > 30 else row['task'],
+                                '層級': level_display,
+                                '視覺化': f"{'  ' * level}{'■' if level == 0 else '├─'} {row['task'][:20]}"[:35],
+                                '負責單位': (row['owner'][:10] + '...') if len(str(row['owner'])) > 10 else row['owner'] if row['owner'] else '(無)',
+                                '有日期': '✅' if pd.notna(row['plan_start']) and pd.notna(row['plan_end']) else '❌'
+                            })
+                        st.dataframe(pd.DataFrame(debug_data), use_container_width=True)
+
+                        st.caption("⚠️ 如果判斷不正確，請修改 Excel 格式（參考上方說明）或聯繫開發者")
+                except Exception as e:
+                    st.error(f"診斷工具載入失敗：{e}")
 
         st.divider()
 
