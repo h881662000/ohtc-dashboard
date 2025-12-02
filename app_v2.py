@@ -328,21 +328,25 @@ def load_excel_data(uploaded_file):
         try:
             if 'Layout' in sheet_names:
                 ws_layout = wb['Layout']
-                if hasattr(ws_layout, '_images'):
+                if hasattr(ws_layout, '_images') and ws_layout._images:
                     for img in ws_layout._images:
                         try:
                             # 提取圖片資訊
                             import io
-                            image_data = {
-                                'data': img.ref.getvalue() if hasattr(img.ref, 'getvalue') else None,
-                                'anchor': str(img.anchor) if hasattr(img, 'anchor') else '',
-                                'format': img.format if hasattr(img, 'format') else 'png'
-                            }
-                            if image_data['data']:
-                                layout_images.append(image_data)
-                        except Exception as img_err:
-                            st.warning(f"讀取圖片時發生錯誤: {str(img_err)}")
-        except Exception as layout_err:
+                            # 獲取圖片二進制資料
+                            if hasattr(img, 'ref') and hasattr(img.ref, 'getvalue'):
+                                img_bytes = img.ref.getvalue()
+                            elif hasattr(img, '_data'):
+                                img_bytes = img._data()
+                            else:
+                                continue
+
+                            if img_bytes:
+                                layout_images.append(img_bytes)
+                        except:
+                            # 靜默跳過無法讀取的圖片
+                            continue
+        except:
             pass  # 如果沒有 Layout 分頁或無法讀取，就忽略
 
         return {
@@ -1656,29 +1660,43 @@ def main():
         # 顯示篩選結果數量
         st.caption(f"📊 顯示 {len(filtered_tasks)} / {len(st.session_state['edited_all_tasks'])} 個任務")
 
+        # 檢查是否有篩選結果
+        if filtered_tasks.empty:
+            st.warning("⚠️ 沒有符合篩選條件的任務")
+            st.stop()
+
         # 準備顯示用的資料（加入層級標記，與 Excel 一致）
         display_tasks = filtered_tasks.copy()
 
         def format_task_with_level(row):
             """根據層級格式化任務名稱"""
-            level = row.get('level', 0)
-            task_name = row['task']
+            try:
+                level = row.get('level', 0) if hasattr(row, 'get') else 0
+                task_name = str(row['task']) if 'task' in row else ''
 
-            if level == 0:
-                # 主項目
-                return f"■ {task_name}"
-            elif level == 1:
-                # 次項目
-                return f"  ├─ {task_name}"
-            elif level == 2:
-                # 次次項目
-                return f"    └─ {task_name}"
-            else:
-                # 更深層級
-                indent = "  " * level
-                return f"{indent}└─ {task_name}"
+                if level == 0:
+                    # 主項目
+                    return f"■ {task_name}"
+                elif level == 1:
+                    # 次項目
+                    return f"  ├─ {task_name}"
+                elif level == 2:
+                    # 次次項目
+                    return f"    └─ {task_name}"
+                else:
+                    # 更深層級
+                    indent = "  " * level
+                    return f"{indent}└─ {task_name}"
+            except Exception as e:
+                # 如果格式化失敗，返回原始任務名稱
+                return str(row.get('task', '')) if hasattr(row, 'get') else ''
 
-        display_tasks['task_display'] = display_tasks.apply(format_task_with_level, axis=1)
+        # 安全地應用格式化函數
+        try:
+            display_tasks['task_display'] = display_tasks.apply(format_task_with_level, axis=1)
+        except Exception as e:
+            # 如果應用失敗，使用原始任務名稱
+            display_tasks['task_display'] = display_tasks['task'].astype(str)
 
         # 可編輯的任務表格
         if show_all:
@@ -2092,9 +2110,9 @@ def main():
                     st.markdown("#### 🖼️ Layout 圖片")
                     layout_images = data.get('layout_images', [])
                     st.write(f"共找到 {len(layout_images)} 張圖片")
-                    for idx, img_data in enumerate(layout_images):
+                    for idx, img_bytes in enumerate(layout_images):
                         try:
-                            st.image(img_data['data'], caption=f"Layout 圖片 {idx + 1}", use_container_width=True)
+                            st.image(img_bytes, caption=f"Layout 圖片 {idx + 1}", use_container_width=True)
                         except Exception as e:
                             st.error(f"無法顯示圖片 {idx + 1}: {str(e)}")
         else:
