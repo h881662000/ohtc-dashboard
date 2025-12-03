@@ -46,12 +46,13 @@ st.set_page_config(
     page_title="OHTC 專案管理儀表板 v2.0",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="auto"  # 手機端自動收合側邊欄
 )
 
 # 自訂 CSS
 st.markdown("""
 <style>
+    /* 基礎樣式 */
     .main-header {
         font-size: 2.5rem;
         font-weight: bold;
@@ -73,15 +74,97 @@ st.markdown("""
     .risk-low { background-color: #28a745; color: white; padding: 5px 10px; border-radius: 4px; }
     .milestone-done { border-left: 4px solid #28a745; }
     .milestone-pending { border-left: 4px solid #ffc107; }
-    .report-section { 
-        background: #f8f9fa; 
-        border-radius: 8px; 
-        padding: 20px; 
+    .report-section {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 20px;
         margin: 10px 0;
     }
     div[data-testid="stExpander"] details summary p {
         font-size: 1.1rem;
         font-weight: 600;
+    }
+
+    /* 響應式設計 - 手機端優化 */
+    @media only screen and (max-width: 768px) {
+        /* 主標題縮小 */
+        .main-header {
+            font-size: 1.5rem;
+        }
+
+        /* 全局文字換行 */
+        body, div, p, span, li, td, th {
+            word-wrap: break-word !important;
+            word-break: break-word !important;
+            overflow-wrap: break-word !important;
+        }
+
+        /* Streamlit 容器優化 */
+        .stApp {
+            max-width: 100vw;
+            overflow-x: hidden;
+        }
+
+        /* 表格優化 */
+        div[data-testid="stDataFrame"] {
+            overflow-x: auto !important;
+            max-width: 100vw !important;
+        }
+
+        /* 按鈕和輸入框優化 */
+        .stButton > button {
+            width: 100%;
+            font-size: 0.9rem;
+        }
+
+        .stTextInput > div > div > input {
+            font-size: 0.9rem;
+        }
+
+        /* 卡片優化 */
+        .metric-card {
+            padding: 0.5rem;
+            font-size: 0.9rem;
+        }
+
+        /* 側邊欄優化 */
+        section[data-testid="stSidebar"] {
+            width: 100% !important;
+        }
+
+        /* 文字大小調整 */
+        h1 { font-size: 1.5rem !important; }
+        h2 { font-size: 1.3rem !important; }
+        h3 { font-size: 1.1rem !important; }
+        h4 { font-size: 1rem !important; }
+
+        /* 報告區塊優化 */
+        .report-section {
+            padding: 10px;
+            font-size: 0.9rem;
+        }
+
+        /* 展開器優化 */
+        div[data-testid="stExpander"] details summary p {
+            font-size: 0.95rem;
+        }
+    }
+
+    /* 小手機端 (< 480px) */
+    @media only screen and (max-width: 480px) {
+        .main-header {
+            font-size: 1.2rem;
+        }
+
+        h1 { font-size: 1.2rem !important; }
+        h2 { font-size: 1.1rem !important; }
+        h3 { font-size: 1rem !important; }
+        h4 { font-size: 0.95rem !important; }
+
+        .stButton > button {
+            font-size: 0.85rem;
+            padding: 0.5rem;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
