@@ -123,6 +123,19 @@ st.markdown("""
             max-width: 100vw !important;
         }
 
+        /* 甘特圖 Y 軸標籤優化 */
+        .ytick text {
+            max-width: 80px !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            white-space: nowrap !important;
+        }
+
+        /* Plotly Y 軸文字優化 */
+        g.ytick text {
+            font-size: 8px !important;
+        }
+
         /* 按鈕和輸入框優化 */
         .stButton > button {
             width: 100%;
@@ -273,6 +286,7 @@ def load_excel_data(uploaded_file):
 
         # 解析任務資料
         tasks = []
+        filtered_count = 0  # 記錄被過濾的任務數量
         for i in range(6, len(df_software)):
             row = df_software.iloc[i]
             task_name = row[0]
@@ -281,6 +295,12 @@ def load_excel_data(uploaded_file):
                 # 跳過標題行（檢查是否 row[4] 包含 "百分比" 等關鍵字）
                 if isinstance(row[4], str) and ('百分比' in str(row[4]) or '完成' in str(row[4])):
                     continue
+
+                # 檢查 T 欄（備註欄，索引 19）是否包含「不支援」
+                notes = str(row[19]).strip() if pd.notna(row[19]) else ''
+                if '不支援' in notes:
+                    filtered_count += 1
+                    continue  # 跳過此任務，不顯示
 
                 # ========== 判斷任務層級（多重方法）==========
                 owner = str(row[2]) if pd.notna(row[2]) else ''
@@ -453,6 +473,7 @@ def load_excel_data(uploaded_file):
             'raw_software': df_software,
             'sheet_names': sheet_names,
             'layout_images': layout_images,
+            'filtered_count': filtered_count,  # 被過濾的任務數量
         }
     except Exception as e:
         st.error(f"載入檔案錯誤: {str(e)}")
@@ -490,8 +511,12 @@ def create_gantt_chart(df_tasks, show_actual=False, show_today_line=True, gantt_
         gantt_data['Finish'] = pd.to_datetime(gantt_data['plan_end'])
         # 保留完整任務名稱用於 hover
         gantt_data['TaskFull'] = gantt_data['task']
-        # 縮短任務名稱以適應手機屏幕（最多20個字符）
-        gantt_data['Task'] = gantt_data['task'].apply(lambda x: str(x)[:20] + '...' if len(str(x)) > 20 else str(x))
+        # 縮短任務名稱以適應屏幕（手機端更短）
+        # 如果啟用縮放（通常是手機端），使用更短的名稱
+        max_chars = 10 if enable_zoom else 20
+        gantt_data['Task'] = gantt_data['task'].apply(
+            lambda x: str(x)[:max_chars] + '...' if len(str(x)) > max_chars else str(x)
+        )
         gantt_data['Status'] = gantt_data['status']
 
         # 創建甘特圖
@@ -528,18 +553,24 @@ def create_gantt_chart(df_tasks, show_actual=False, show_today_line=True, gantt_
             x_range_start = min(today, min_date) - pd.Timedelta(days=7)
             x_range_end = max_date + pd.Timedelta(days=7)
 
+        # 根據是否啟用縮放（通常代表手機端）調整邊距
+        left_margin = 70 if enable_zoom else 120  # 手機端大幅減少左側邊距
+        y_tickfont_size = 8 if enable_zoom else 9  # 手機端字體更小
+
         # 設定高度和 X 軸範圍
         fig.update_layout(
             height=max(500, len(gantt_data) * 28),
             xaxis_title='日期',
             yaxis_title='',
             xaxis_range=[x_range_start, x_range_end],
-            # 優化手機端顯示
-            margin=dict(l=120, r=20, t=50, b=50),  # 減少左側邊距
+            # 優化顯示（手機端更緊湊）
+            margin=dict(l=left_margin, r=20, t=50, b=50),
             font=dict(size=10),  # 縮小字體
             yaxis=dict(
-                tickfont=dict(size=9),  # Y軸標籤字體更小
-                automargin=True  # 自動調整邊距
+                tickfont=dict(size=y_tickfont_size),  # Y軸標籤字體
+                automargin=False,  # 關閉自動邊距，使用固定值
+                tickmode='linear',  # 線性刻度
+                side='left'  # 標籤在左側
             ),
             xaxis=dict(
                 tickfont=dict(size=9),  # X軸標籤字體更小
@@ -1205,24 +1236,24 @@ def main():
         enable_gantt_zoom = st.checkbox(
             "🔍 啟用甘特圖縮放/拖曳",
             value=st.session_state.get('default_zoom_enabled', False),
-            help="📱 **手機端建議開啟**：可雙指縮放、拖曳查看細節\n💻 **電腦端建議關閉**：避免滾輪誤觸過度縮放\n\n勾選後可用滾輪或雙指縮放甘特圖",
+            help="📱 **手機模式（建議開啟）**：\n• 可雙指縮放、拖曳查看\n• 任務名稱縮短至10字\n• 左側邊距更小，圖表更大\n\n💻 **電腦模式（建議關閉）**：\n• 避免滾輪誤觸\n• 任務名稱顯示20字\n• 固定視圖",
             key="enable_gantt_zoom"
         )
 
         # 顯示當前狀態
         if enable_gantt_zoom:
-            st.caption("✅ 已啟用：可用滾輪/雙指縮放、拖曳查看")
+            st.caption("✅ 手機模式：任務名稱短、可縮放拖曳")
         else:
-            st.caption("🔒 已鎖定：固定視圖，避免誤觸")
+            st.caption("🔒 電腦模式：任務名稱長、視圖鎖定")
 
         # 快速切換按鈕（讓手機用戶更方便）
         col_toggle1, col_toggle2 = st.columns(2)
         with col_toggle1:
-            if st.button("📱 手機模式", use_container_width=True, help="啟用縮放（建議手機用戶）"):
+            if st.button("📱 手機模式", use_container_width=True, help="縮短任務名稱、啟用縮放（建議手機）"):
                 st.session_state['default_zoom_enabled'] = True
                 st.rerun()
         with col_toggle2:
-            if st.button("💻 電腦模式", use_container_width=True, help="鎖定縮放（建議電腦用戶）"):
+            if st.button("💻 電腦模式", use_container_width=True, help="較長任務名稱、鎖定縮放（建議電腦）"):
                 st.session_state['default_zoom_enabled'] = False
                 st.rerun()
 
@@ -1351,18 +1382,24 @@ def main():
         with col2:
             st.markdown("""
             ### 📋 支援格式
-            
+
             - ✅ 軟體時程表（甘特圖）
             - ✅ 系統時程表（區域進度）
             - ✅ 工程進度確認表
             - ✅ EQ 工作清單
-            
+
             ### 🚀 快速開始
-            
+
             1. 上傳 Excel 排程表
             2. 瀏覽各項分析圖表
             3. 追蹤延遲項目
             4. 生成並下載報表
+
+            ### 💡 智能過濾
+
+            - 📝 T 欄（備註）標記「不支援」
+            - 🔍 該任務自動隱藏不顯示
+            - 📊 查看診斷資訊了解過濾數量
             """)
         return
     
@@ -1458,18 +1495,24 @@ def main():
 
         # 使用提示（根據縮放設定顯示不同訊息）
         if enable_gantt_zoom:
-            st.info("✅ **縮放已啟用：** 可用滾輪/雙指縮放、拖曳查看甘特圖。任務名稱過長時會顯示縮寫，將滑鼠/手指停在任務條上可查看完整資訊。")
+            st.info("✅ **手機模式已啟用：** 可用滾輪/雙指縮放、拖曳查看甘特圖。任務名稱已縮短以節省空間（最多10字），點擊任務條可查看完整資訊。")
         else:
-            st.info("🔒 **縮放已鎖定：** 視圖固定，避免誤觸。如需縮放，請至側邊欄「⚙️ 顯示設定」勾選「啟用甘特圖縮放/拖曳」。")
+            st.info("🔒 **電腦模式（縮放鎖定）：** 視圖固定，避免誤觸。任務名稱最多顯示20字。如需啟用手機模式，請至側邊欄「⚙️ 顯示設定」。")
 
         # 診斷資訊
         total_tasks = len(df_tasks)
         tasks_with_dates = len(df_tasks[df_tasks['plan_start'].notna() & df_tasks['plan_end'].notna()])
+        filtered_count = data.get('filtered_count', 0)  # 獲取被過濾的任務數量
 
         with st.expander("📊 資料診斷資訊", expanded=False):
-            st.write(f"**總任務數：** {total_tasks}")
+            st.write(f"**顯示任務數：** {total_tasks}")
             st.write(f"**有計劃日期的任務：** {tasks_with_dates}")
             st.write(f"**缺少日期的任務：** {total_tasks - tasks_with_dates}")
+
+            # 顯示過濾統計
+            if filtered_count > 0:
+                st.info(f"💡 **已自動過濾：** {filtered_count} 個任務（備註欄包含「不支援」）")
+                st.caption("💡 如果任務的 T 欄（備註欄）包含「不支援」，該任務將不會在系統中顯示。")
 
             if tasks_with_dates == 0:
                 st.error("⚠️ 所有任務都缺少計劃日期！請檢查 Excel 中的 I 欄（計劃開始）和 J 欄（計劃完成）是否有填寫日期。")
