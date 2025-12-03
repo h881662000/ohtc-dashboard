@@ -111,6 +111,18 @@ st.markdown("""
             max-width: 100vw !important;
         }
 
+        /* Plotly 圖表優化 */
+        .js-plotly-plot {
+            overflow-x: auto !important;
+            max-width: 100vw !important;
+        }
+
+        /* 圖表容器 */
+        div[data-testid="stPlotlyChart"] {
+            overflow-x: auto !important;
+            max-width: 100vw !important;
+        }
+
         /* 按鈕和輸入框優化 */
         .stButton > button {
             width: 100%;
@@ -468,7 +480,10 @@ def create_gantt_chart(df_tasks, show_actual=False, show_today_line=True, gantt_
         # 準備資料給 px.timeline
         gantt_data['Start'] = pd.to_datetime(gantt_data['plan_start'])
         gantt_data['Finish'] = pd.to_datetime(gantt_data['plan_end'])
-        gantt_data['Task'] = gantt_data['task']
+        # 保留完整任務名稱用於 hover
+        gantt_data['TaskFull'] = gantt_data['task']
+        # 縮短任務名稱以適應手機屏幕（最多20個字符）
+        gantt_data['Task'] = gantt_data['task'].apply(lambda x: str(x)[:20] + '...' if len(str(x)) > 20 else str(x))
         gantt_data['Status'] = gantt_data['status']
 
         # 創建甘特圖
@@ -481,7 +496,8 @@ def create_gantt_chart(df_tasks, show_actual=False, show_today_line=True, gantt_
             color='Status',
             color_discrete_map=color_map,
             title='📅 專案甘特圖',
-            hover_data=['owner']
+            hover_data={'TaskFull': True, 'owner': True, 'Task': False},  # 在 hover 時顯示完整任務名稱
+            labels={'TaskFull': '任務名稱'}
         )
 
         # 反轉 Y 軸，使第一個任務在最上面
@@ -510,7 +526,30 @@ def create_gantt_chart(df_tasks, show_actual=False, show_today_line=True, gantt_
             xaxis_title='日期',
             yaxis_title='',
             xaxis_range=[x_range_start, x_range_end],
+            # 優化手機端顯示
+            margin=dict(l=120, r=20, t=50, b=50),  # 減少左側邊距
+            font=dict(size=10),  # 縮小字體
+            yaxis=dict(
+                tickfont=dict(size=9),  # Y軸標籤字體更小
+                automargin=True  # 自動調整邊距
+            ),
+            xaxis=dict(
+                tickfont=dict(size=9),  # X軸標籤字體更小
+                automargin=True
+            ),
+            # 啟用拖曳和縮放（手機端可以滑動查看）
+            dragmode='pan',
+            # 圖表標題字體
+            title=dict(
+                font=dict(size=14),
+                x=0.5,  # 居中
+                xanchor='center'
+            )
         )
+
+        # 配置交互選項（啟用滾動縮放）
+        fig.update_xaxes(fixedrange=False)  # 允許 X 軸縮放
+        fig.update_yaxes(fixedrange=False)  # 允許 Y 軸縮放
 
         # 顯示今日線（依據用戶設定）
         if show_today_line:
@@ -1376,6 +1415,9 @@ def main():
     with tab1:
         st.subheader("📅 專案甘特圖")
 
+        # 手機端使用提示
+        st.info("📱 **手機端提示：** 可用雙指縮放、拖曳查看甘特圖。任務名稱過長時會顯示縮寫，將滑鼠/手指停在任務條上可查看完整資訊。")
+
         # 診斷資訊
         total_tasks = len(df_tasks)
         tasks_with_dates = len(df_tasks[df_tasks['plan_start'].notna() & df_tasks['plan_end'].notna()])
@@ -1395,7 +1437,18 @@ def main():
 
         gantt_fig = create_gantt_chart(df_tasks, show_actual, show_today_line, gantt_auto_range)
         if gantt_fig:
-            st.plotly_chart(gantt_fig, use_container_width=True)
+            # 使用 config 參數優化手機端體驗
+            st.plotly_chart(
+                gantt_fig,
+                use_container_width=True,
+                config={
+                    'scrollZoom': True,  # 啟用滾輪縮放
+                    'displayModeBar': True,  # 顯示工具列
+                    'modeBarButtonsToRemove': ['lasso2d', 'select2d'],  # 移除不常用的工具
+                    'displaylogo': False,  # 隱藏 Plotly logo
+                    'responsive': True  # 響應式
+                }
+            )
         else:
             st.warning("⚠️ 資料不足，無法生成甘特圖")
             st.info("💡 甘特圖需要任務包含「計劃開始日期」和「計劃完成日期」。請檢查 Excel 的 I 欄和 J 欄是否有填寫日期。")
@@ -1519,7 +1572,7 @@ def main():
         st.subheader("✏️ 專案與任務編輯器")
 
         # 提示：篩選與操作說明
-        st.info("💡 **使用提示：** 篩選與搜尋不會跳頁，但執行操作（如新增、批量修改）後會重新載入，此時可能回到甘特圖頁面。修改完成後請前往「匯出」分頁儲存變更。")
+        st.info("💡 **使用提示：** 篩選與搜尋本身不會觸發頁面刷新。但執行操作（如新增、批量修改、儲存變更）後會重新載入頁面，此時會回到甘特圖分頁（這是 Streamlit 的限制）。修改完成後請前往「匯出」分頁儲存變更。")
 
         # 初始化編輯歷史（用於撤銷/重做）
         if 'edit_history' not in st.session_state:
