@@ -462,8 +462,16 @@ def load_excel_data(uploaded_file):
 # ============================================================
 # 圖表生成函數
 # ============================================================
-def create_gantt_chart(df_tasks, show_actual=False, show_today_line=True, gantt_auto_range=True):
-    """建立甘特圖（使用 plotly.express.timeline）"""
+def create_gantt_chart(df_tasks, show_actual=False, show_today_line=True, gantt_auto_range=True, enable_zoom=False):
+    """建立甘特圖（使用 plotly.express.timeline）
+
+    Args:
+        df_tasks: 任務資料框
+        show_actual: 是否顯示實際進度
+        show_today_line: 是否顯示今日線
+        gantt_auto_range: 是否自動範圍
+        enable_zoom: 是否啟用縮放和拖曳（建議手機端開啟，電腦端關閉）
+    """
     gantt_data = df_tasks[df_tasks['plan_start'].notna() & df_tasks['plan_end'].notna()].copy()
 
     if gantt_data.empty:
@@ -537,8 +545,8 @@ def create_gantt_chart(df_tasks, show_actual=False, show_today_line=True, gantt_
                 tickfont=dict(size=9),  # X軸標籤字體更小
                 automargin=True
             ),
-            # 啟用拖曳和縮放（手機端可以滑動查看）
-            dragmode='pan',
+            # 根據設定啟用/禁用拖曳
+            dragmode='pan' if enable_zoom else False,
             # 圖表標題字體
             title=dict(
                 font=dict(size=14),
@@ -547,9 +555,9 @@ def create_gantt_chart(df_tasks, show_actual=False, show_today_line=True, gantt_
             )
         )
 
-        # 配置交互選項（啟用滾動縮放）
-        fig.update_xaxes(fixedrange=False)  # 允許 X 軸縮放
-        fig.update_yaxes(fixedrange=False)  # 允許 Y 軸縮放
+        # 配置交互選項（根據設定啟用/禁用縮放）
+        fig.update_xaxes(fixedrange=not enable_zoom)  # enable_zoom=True 時允許縮放
+        fig.update_yaxes(fixedrange=not enable_zoom)  # enable_zoom=True 時允許縮放
 
         # 顯示今日線（依據用戶設定）
         if show_today_line:
@@ -1185,6 +1193,39 @@ def main():
             help="只顯示專案時間範圍，避免大片空白。取消勾選可看到從今日到專案的完整時間軸。"
         )
 
+        # 智能縮放控制
+        st.markdown("**📐 縮放控制**")
+
+        # 初始化縮放設定（默認關閉，避免電腦端誤觸）
+        if 'gantt_zoom_initialized' not in st.session_state:
+            st.session_state['gantt_zoom_initialized'] = True
+            # 檢測用戶代理（簡單方式：默認關閉）
+            st.session_state['default_zoom_enabled'] = False
+
+        enable_gantt_zoom = st.checkbox(
+            "🔍 啟用甘特圖縮放/拖曳",
+            value=st.session_state.get('default_zoom_enabled', False),
+            help="📱 **手機端建議開啟**：可雙指縮放、拖曳查看細節\n💻 **電腦端建議關閉**：避免滾輪誤觸過度縮放\n\n勾選後可用滾輪或雙指縮放甘特圖",
+            key="enable_gantt_zoom"
+        )
+
+        # 顯示當前狀態
+        if enable_gantt_zoom:
+            st.caption("✅ 已啟用：可用滾輪/雙指縮放、拖曳查看")
+        else:
+            st.caption("🔒 已鎖定：固定視圖，避免誤觸")
+
+        # 快速切換按鈕（讓手機用戶更方便）
+        col_toggle1, col_toggle2 = st.columns(2)
+        with col_toggle1:
+            if st.button("📱 手機模式", use_container_width=True, help="啟用縮放（建議手機用戶）"):
+                st.session_state['default_zoom_enabled'] = True
+                st.rerun()
+        with col_toggle2:
+            if st.button("💻 電腦模式", use_container_width=True, help="鎖定縮放（建議電腦用戶）"):
+                st.session_state['default_zoom_enabled'] = False
+                st.rerun()
+
         # Excel 原始資料檢視
         with st.expander("🔍 Excel 原始資料檢視（除錯用）", expanded=False):
             try:
@@ -1415,8 +1456,11 @@ def main():
     with tab1:
         st.subheader("📅 專案甘特圖")
 
-        # 手機端使用提示
-        st.info("📱 **手機端提示：** 可用雙指縮放、拖曳查看甘特圖。任務名稱過長時會顯示縮寫，將滑鼠/手指停在任務條上可查看完整資訊。")
+        # 使用提示（根據縮放設定顯示不同訊息）
+        if enable_gantt_zoom:
+            st.info("✅ **縮放已啟用：** 可用滾輪/雙指縮放、拖曳查看甘特圖。任務名稱過長時會顯示縮寫，將滑鼠/手指停在任務條上可查看完整資訊。")
+        else:
+            st.info("🔒 **縮放已鎖定：** 視圖固定，避免誤觸。如需縮放，請至側邊欄「⚙️ 顯示設定」勾選「啟用甘特圖縮放/拖曳」。")
 
         # 診斷資訊
         total_tasks = len(df_tasks)
@@ -1435,19 +1479,27 @@ def main():
             debug_df = df_tasks[['task', 'plan_start', 'plan_end', 'status']].head(5)
             st.dataframe(debug_df)
 
-        gantt_fig = create_gantt_chart(df_tasks, show_actual, show_today_line, gantt_auto_range)
+        gantt_fig = create_gantt_chart(df_tasks, show_actual, show_today_line, gantt_auto_range, enable_gantt_zoom)
         if gantt_fig:
-            # 使用 config 參數優化手機端體驗
+            # 根據縮放設定配置 Plotly
+            plotly_config = {
+                'displayModeBar': True,  # 顯示工具列
+                'modeBarButtonsToRemove': ['lasso2d', 'select2d'],  # 移除不常用的工具
+                'displaylogo': False,  # 隱藏 Plotly logo
+                'responsive': True  # 響應式
+            }
+
+            # 只在啟用縮放時添加 scrollZoom
+            if enable_gantt_zoom:
+                plotly_config['scrollZoom'] = True  # 啟用滾輪縮放
+            else:
+                plotly_config['scrollZoom'] = False  # 禁用滾輪縮放
+                plotly_config['doubleClick'] = False  # 禁用雙擊重置
+
             st.plotly_chart(
                 gantt_fig,
                 use_container_width=True,
-                config={
-                    'scrollZoom': True,  # 啟用滾輪縮放
-                    'displayModeBar': True,  # 顯示工具列
-                    'modeBarButtonsToRemove': ['lasso2d', 'select2d'],  # 移除不常用的工具
-                    'displaylogo': False,  # 隱藏 Plotly logo
-                    'responsive': True  # 響應式
-                }
+                config=plotly_config
             )
         else:
             st.warning("⚠️ 資料不足，無法生成甘特圖")
