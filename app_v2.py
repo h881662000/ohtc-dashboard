@@ -395,7 +395,37 @@ def load_excel_data(uploaded_file):
                 tasks.append(task)
         
         df_tasks = pd.DataFrame(tasks)
-        
+
+        # 確保 progress_pct 為 0-100 格式
+        if not df_tasks.empty and 'progress_pct' in df_tasks.columns:
+            max_progress = df_tasks['progress_pct'].max()
+            if max_progress <= 1 and max_progress > 0:
+                df_tasks['progress_pct'] = df_tasks['progress_pct'] * 100
+            if 'target_pct' in df_tasks.columns:
+                max_target = df_tasks['target_pct'].max()
+                if max_target <= 1 and max_target > 0:
+                    df_tasks['target_pct'] = df_tasks['target_pct'] * 100
+
+        # 自動計算狀態（如果 status 欄位為空）
+        if not df_tasks.empty:
+            today = datetime.now().date()
+            def calc_status(row):
+                if row['status'] and str(row['status']).strip():
+                    return row['status']
+                progress = row['progress_pct'] if pd.notna(row['progress_pct']) else 0
+                plan_end = row['plan_end']
+                if progress >= 100:
+                    return 'Done'
+                elif plan_end is not None and pd.notna(plan_end):
+                    try:
+                        end_date = plan_end.date() if hasattr(plan_end, 'date') else plan_end
+                        if end_date < today:
+                            return 'Delay'
+                    except:
+                        pass
+                return 'Going'
+            df_tasks['status'] = df_tasks.apply(calc_status, axis=1)
+
         # 讀取系統時程
         df_system = pd.read_excel(uploaded_file, sheet_name='系統時程_C', header=None)
         system_items = []
@@ -832,6 +862,92 @@ def create_risk_matrix(df_tasks):
         height=400,
     )
     
+    return fig
+
+
+def create_progress_distribution(df_tasks):
+    """進度區間分布圖"""
+    if df_tasks.empty:
+        return None
+
+    ranges = [
+        (0, 0, '未開始 (0%)', '#9e9e9e'),
+        (1, 25, '剛開始 (1-25%)', '#ea4335'),
+        (26, 50, '進行中 (26-50%)', '#f9ab00'),
+        (51, 75, '過半 (51-75%)', '#1a73e8'),
+        (76, 99, '接近完成 (76-99%)', '#34a853'),
+        (100, 100, '已完成 (100%)', '#1e7e34')
+    ]
+
+    data = []
+    for min_val, max_val, label, color in ranges:
+        count = len(df_tasks[(df_tasks['progress_pct'] >= min_val) & (df_tasks['progress_pct'] <= max_val)])
+        data.append({'range': label, 'count': count, 'color': color})
+
+    df_dist = pd.DataFrame(data)
+
+    fig = go.Figure(data=[
+        go.Bar(
+            x=df_dist['range'],
+            y=df_dist['count'],
+            marker_color=df_dist['color'],
+            text=df_dist['count'],
+            textposition='auto',
+        )
+    ])
+
+    fig.update_layout(
+        title='📊 任務進度區間分布',
+        xaxis_title='進度區間',
+        yaxis_title='任務數量',
+        height=350,
+    )
+    return fig
+
+
+def create_owner_progress_chart(df_tasks):
+    """負責人平均進度圖"""
+    if df_tasks.empty:
+        return None
+
+    owner_stats = df_tasks.groupby('owner').agg({
+        'progress_pct': 'mean',
+        'task': 'count'
+    }).reset_index()
+
+    owner_stats = owner_stats[owner_stats['owner'] != ''].sort_values('progress_pct', ascending=True)
+
+    if owner_stats.empty:
+        return None
+
+    colors = []
+    for pct in owner_stats['progress_pct']:
+        if pct >= 80:
+            colors.append('#34a853')
+        elif pct >= 50:
+            colors.append('#1a73e8')
+        elif pct >= 25:
+            colors.append('#f9ab00')
+        else:
+            colors.append('#ea4335')
+
+    fig = go.Figure(data=[
+        go.Bar(
+            y=owner_stats['owner'],
+            x=owner_stats['progress_pct'],
+            orientation='h',
+            marker_color=colors,
+            text=[f'{p:.1f}%' for p in owner_stats['progress_pct']],
+            textposition='auto',
+        )
+    ])
+
+    fig.update_layout(
+        title='👥 各負責人平均進度',
+        xaxis_title='平均進度 (%)',
+        height=max(300, len(owner_stats) * 35),
+        xaxis=dict(range=[0, 100]),
+    )
     return fig
 
 
@@ -1566,30 +1682,56 @@ def main():
     
     # Tab 2: 統計分析
     with tab2:
-        col1, col2 = st.columns(2)
+        # 子分頁
+        sub_tab1, sub_tab2, sub_tab3 = st.tabs(["📊 任務狀態分布", "📈 進度趨勢圖", "👤 負責人分析"])
 
-        with col1:
-            status_fig = create_status_pie(df_tasks)
-            if status_fig:
-                st.plotly_chart(status_fig, use_container_width=True)
+        with sub_tab1:
+            col1, col2 = st.columns(2)
+            with col1:
+                status_fig = create_status_pie(df_tasks)
+                if status_fig:
+                    st.plotly_chart(status_fig, use_container_width=True)
+                else:
+                    st.warning("資料不足，無法生成狀態圓餅圖")
+            with col2:
+                owner_fig = create_owner_workload(df_tasks)
+                if owner_fig:
+                    st.plotly_chart(owner_fig, use_container_width=True)
+                else:
+                    st.warning("資料不足，無法生成負責單位工作量圖")
+
+            st.divider()
+            dist_fig = create_progress_distribution(df_tasks)
+            if dist_fig:
+                st.plotly_chart(dist_fig, use_container_width=True)
+
+        with sub_tab2:
+            trend_fig = create_progress_trend(df_tasks)
+            if trend_fig:
+                st.plotly_chart(trend_fig, use_container_width=True)
             else:
-                st.warning("資料不足，無法生成狀態圓餅圖")
+                st.warning("資料不足，無法生成進度趨勢圖")
 
-        with col2:
-            owner_fig = create_owner_workload(df_tasks)
-            if owner_fig:
-                st.plotly_chart(owner_fig, use_container_width=True)
+        with sub_tab3:
+            owner_progress_fig = create_owner_progress_chart(df_tasks)
+            if owner_progress_fig:
+                st.plotly_chart(owner_progress_fig, use_container_width=True)
             else:
-                st.warning("資料不足，無法生成負責單位工作量圖")
+                st.warning("資料不足，無法生成負責人進度圖")
 
-        st.divider()
-
-        # 進度趨勢
-        trend_fig = create_progress_trend(df_tasks)
-        if trend_fig:
-            st.plotly_chart(trend_fig, use_container_width=True)
-        else:
-            st.warning("資料不足，無法生成進度趨勢圖")
+            st.divider()
+            if not df_tasks.empty:
+                st.markdown("### 📋 負責人任務統計")
+                owner_summary = df_tasks.groupby('owner').agg({
+                    'task': 'count',
+                    'progress_pct': 'mean',
+                    'status': lambda x: (x == 'Done').sum()
+                }).reset_index()
+                owner_summary.columns = ['負責單位', '任務數', '平均進度(%)', '已完成']
+                owner_summary['完成率(%)'] = (owner_summary['已完成'] / owner_summary['任務數'] * 100).round(1)
+                owner_summary['平均進度(%)'] = owner_summary['平均進度(%)'].round(1)
+                owner_summary = owner_summary[owner_summary['負責單位'] != ''].sort_values('任務數', ascending=False)
+                st.dataframe(owner_summary, use_container_width=True, hide_index=True)
     
     # Tab 3: 風險追蹤
     with tab3:
