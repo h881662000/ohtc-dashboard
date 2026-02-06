@@ -1650,11 +1650,12 @@ def main():
     st.divider()
     
     # 主要標籤頁
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "📅 甘特圖",
         "📊 統計分析",
         "⚠️ 風險追蹤",
         "🏭 區域進度",
+        "📋 進度統計",
         "✏️ 專案編輯",
         "📝 週報生成",
         "⬇️ 匯出"
@@ -1859,8 +1860,77 @@ def main():
                         </div>
                         """, unsafe_allow_html=True)
     
-    # Tab 5: 專案編輯
+    # Tab 5: 進度統計
     with tab5:
+        st.subheader("📋 進度統計")
+
+        df_progress = data.get('progress_stats', pd.DataFrame())
+
+        if df_progress.empty:
+            st.warning("⚠️ 未找到進度統計資料（需要「工程_工作進度確認表」工作表）")
+        else:
+            # 統計摘要卡片
+            st.markdown("### 📊 各項目完成統計")
+            items = ['C鋼', '軌道', 'HID', '圖資', 'OHB', 'CycleTest']
+            cols = st.columns(len(items))
+
+            for idx, item in enumerate(items):
+                target_col = f'{item}_目標'
+                actual_col = f'{item}_實際'
+                if target_col in df_progress.columns and actual_col in df_progress.columns:
+                    total = df_progress[target_col].notna().sum()
+                    done = df_progress[actual_col].notna().sum()
+                    pct = (done / total * 100) if total > 0 else 0
+                    with cols[idx]:
+                        st.metric(item, f"{done}/{total}", f"{pct:.0f}%")
+
+            st.divider()
+
+            # 進度條視覺化
+            st.markdown("### 📈 各項目進度")
+            for item in items:
+                target_col = f'{item}_目標'
+                actual_col = f'{item}_實際'
+                if target_col in df_progress.columns and actual_col in df_progress.columns:
+                    total = df_progress[target_col].notna().sum()
+                    done = df_progress[actual_col].notna().sum()
+                    pct = (done / total * 100) if total > 0 else 0
+                    color = '#28a745' if pct >= 70 else '#ffc107' if pct >= 30 else '#dc3545'
+                    st.markdown(f"""
+                    <div style="display: flex; align-items: center; margin: 10px 0;">
+                        <div style="width: 100px; font-weight: bold;">{item}</div>
+                        <div style="flex: 1; background: #e9ecef; border-radius: 4px; height: 25px; margin: 0 10px;">
+                            <div style="width: {pct}%; background: {color}; height: 100%; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px;">
+                                {pct:.0f}%
+                            </div>
+                        </div>
+                        <div style="width: 60px; text-align: right;">{done}/{total}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            st.divider()
+
+            # 按區域顯示詳細資料
+            st.markdown("### 📍 各區域進度明細")
+            if '區域' in df_progress.columns:
+                areas = df_progress['區域'].unique()
+                for area in areas:
+                    if area and str(area).strip():
+                        with st.expander(f"📍 {area}"):
+                            area_data = df_progress[df_progress['區域'] == area]
+                            # 顯示該區域的項目
+                            display_cols = ['項目'] + [f'{item}_實際' for item in items if f'{item}_實際' in df_progress.columns]
+                            if display_cols:
+                                st.dataframe(area_data[display_cols], use_container_width=True, hide_index=True)
+
+            st.divider()
+
+            # 完整資料表格
+            st.markdown("### 📋 完整資料表格")
+            st.dataframe(df_progress, use_container_width=True, height=400)
+
+    # Tab 6: 專案編輯
+    with tab6:
         st.subheader("✏️ 專案與任務編輯器")
 
         # 提示：篩選與操作說明
@@ -2426,8 +2496,8 @@ def main():
         else:
             st.warning("⚠️ 未偵測到系統時程資料")
 
-    # Tab 6: 週報生成
-    with tab6:
+    # Tab 7: 週報生成
+    with tab7:
         st.subheader("📝 專案週報生成")
         
         col1, col2 = st.columns([2, 1])
@@ -2535,8 +2605,8 @@ def main():
             else:
                 st.warning("⚠️ 通知功能不可用：notifications.py 模組未找到")
 
-    # Tab 7: 匯出
-    with tab7:
+    # Tab 8: 匯出
+    with tab8:
         st.subheader("⬇️ 匯出資料")
 
         # 檢查是否有編輯過的資料
