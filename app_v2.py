@@ -426,8 +426,17 @@ def load_excel_data(uploaded_file):
                 return 'Going'
             df_tasks['status'] = df_tasks.apply(calc_status, axis=1)
 
-        # 讀取系統時程
-        df_system = pd.read_excel(uploaded_file, sheet_name='系統時程_C', header=None)
+        # 讀取系統時程（支援 系統時程_C, 系統時程_A, 系統時程 等名稱）
+        system_sheet_name = None
+        for sn in sheet_names:
+            if '系統時程' in sn:
+                system_sheet_name = sn
+                break
+
+        if system_sheet_name:
+            df_system = pd.read_excel(uploaded_file, sheet_name=system_sheet_name, header=None)
+        else:
+            df_system = pd.DataFrame()
         system_items = []
         current_area = ''
         for i in range(5, len(df_system)):
@@ -456,11 +465,56 @@ def load_excel_data(uploaded_file):
                 system_items.append(item)
         df_system_tasks = pd.DataFrame(system_items)
         
-        # 讀取工程進度確認表
+        # 讀取進度統計（工程_工作進度確認表）
+        df_engineering = pd.DataFrame()
+        progress_stats = []
         try:
-            df_engineering = pd.read_excel(uploaded_file, sheet_name='工程_工作進度確認表', header=None)
-        except:
-            df_engineering = pd.DataFrame()
+            # 嘗試找到包含「工程」和「進度」的工作表
+            eng_sheet_name = None
+            for sn in sheet_names:
+                if '工程' in sn and '進度' in sn:
+                    eng_sheet_name = sn
+                    break
+
+            if eng_sheet_name:
+                df_eng_raw = pd.read_excel(uploaded_file, sheet_name=eng_sheet_name, header=None)
+                df_engineering = df_eng_raw
+
+                # 解析進度統計欄位
+                # 欄位結構: 區域, 項目, C鋼(目標,實際), 軌道(目標,實際), HID(目標,實際),
+                #          圖資(目標,實際), OHB(目標,實際), Cycle Test(目標,實際),
+                #          EQ Teaching, Hot Run, RTD Test, Release
+                for i in range(3, len(df_eng_raw)):  # 跳過標題列
+                    row = df_eng_raw.iloc[i]
+                    area = str(row[0]).strip() if pd.notna(row[0]) else ''
+                    item = str(row[1]).strip() if pd.notna(row[1]) else ''
+
+                    if area or item:
+                        stat = {
+                            '區域': area,
+                            '項目': item,
+                            'C鋼_目標': safe_datetime(row[2]) if len(row) > 2 else None,
+                            'C鋼_實際': safe_datetime(row[3]) if len(row) > 3 else None,
+                            '軌道_目標': safe_datetime(row[4]) if len(row) > 4 else None,
+                            '軌道_實際': safe_datetime(row[5]) if len(row) > 5 else None,
+                            'HID_目標': safe_datetime(row[6]) if len(row) > 6 else None,
+                            'HID_實際': safe_datetime(row[7]) if len(row) > 7 else None,
+                            '圖資_目標': safe_datetime(row[8]) if len(row) > 8 else None,
+                            '圖資_實際': safe_datetime(row[9]) if len(row) > 9 else None,
+                            'OHB_目標': safe_datetime(row[10]) if len(row) > 10 else None,
+                            'OHB_實際': safe_datetime(row[11]) if len(row) > 11 else None,
+                            'CycleTest_目標': safe_datetime(row[12]) if len(row) > 12 else None,
+                            'CycleTest_實際': safe_datetime(row[13]) if len(row) > 13 else None,
+                            'EQ_Teaching': safe_datetime(row[14]) if len(row) > 14 else None,
+                            'Hot_Run': safe_datetime(row[15]) if len(row) > 15 else None,
+                            'RTD_Test': safe_datetime(row[16]) if len(row) > 16 else None,
+                            'Release': safe_datetime(row[17]) if len(row) > 17 else None,
+                        }
+                        progress_stats.append(stat)
+        except Exception as e:
+            pass
+
+        df_progress_stats = pd.DataFrame(progress_stats) if progress_stats else pd.DataFrame()
         
         # 讀取 EQ 工作清單
         try:
@@ -499,6 +553,7 @@ def load_excel_data(uploaded_file):
             'tasks': df_tasks,
             'system_tasks': df_system_tasks,
             'engineering': df_engineering,
+            'progress_stats': df_progress_stats,  # 進度統計
             'eq_list': df_eq,
             'raw_software': df_software,
             'sheet_names': sheet_names,
@@ -2494,8 +2549,8 @@ def main():
         st.markdown("### 📋 額外分頁資料預覽")
 
         extra_tabs = []
-        if not data.get('engineering', pd.DataFrame()).empty:
-            extra_tabs.append("工程_工作進度確認表")
+        if not data.get('progress_stats', pd.DataFrame()).empty:
+            extra_tabs.append("進度統計")
         if not data.get('eq_list', pd.DataFrame()).empty:
             extra_tabs.append("EQ 工作清單")
         if data.get('layout_images') and len(data.get('layout_images', [])) > 0:
@@ -2505,10 +2560,29 @@ def main():
             extra_tab_objects = st.tabs(extra_tabs)
 
             tab_idx = 0
-            if not data.get('engineering', pd.DataFrame()).empty:
+            if not data.get('progress_stats', pd.DataFrame()).empty:
                 with extra_tab_objects[tab_idx]:
-                    st.markdown("#### 🏗️ 工程_工作進度確認表")
-                    st.dataframe(data['engineering'], use_container_width=True, height=400)
+                    st.markdown("#### 📊 進度統計")
+                    df_stats = data['progress_stats']
+
+                    # 顯示統計摘要
+                    if not df_stats.empty:
+                        # 計算各項目完成數
+                        items = ['C鋼', '軌道', 'HID', '圖資', 'OHB', 'CycleTest']
+                        summary_cols = st.columns(len(items))
+                        for idx, item in enumerate(items):
+                            target_col = f'{item}_目標'
+                            actual_col = f'{item}_實際'
+                            if target_col in df_stats.columns and actual_col in df_stats.columns:
+                                total = df_stats[target_col].notna().sum()
+                                done = df_stats[actual_col].notna().sum()
+                                with summary_cols[idx]:
+                                    st.metric(item, f"{done}/{total}")
+
+                        st.divider()
+
+                    # 顯示詳細表格
+                    st.dataframe(df_stats, use_container_width=True, height=400)
                 tab_idx += 1
 
             if not data.get('eq_list', pd.DataFrame()).empty:
@@ -2528,7 +2602,7 @@ def main():
                         except Exception as e:
                             st.error(f"無法顯示圖片 {idx + 1}: {str(e)}")
         else:
-            st.info("📝 此檔案中沒有「工程_工作進度確認表」、「EQ 工作清單」或「Layout 圖片」分頁")
+            st.info("📝 此檔案中沒有「進度統計」、「EQ 工作清單」或「Layout 圖片」分頁")
 
         st.divider()
         st.markdown("### 💾 下載檔案")
