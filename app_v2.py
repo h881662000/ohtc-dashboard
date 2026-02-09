@@ -1898,13 +1898,13 @@ def main():
                         main_color = '#28a745' if main_pct >= 70 else '#ffc107' if main_pct >= 30 else '#dc3545'
 
                         st.markdown(f"""
-                        <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; margin: 10px 0 5px 0; border-left: 4px solid {main_color};">
+                        <div style="padding: 8px 0; margin: 8px 0 2px 0; border-left: 4px solid {main_color}; padding-left: 12px;">
                             <div style="display: flex; align-items: center;">
-                                <div style="font-weight: bold; font-size: 1.1em; width: 250px;">📌 {main_item[:40]}</div>
-                                <div style="flex: 1; background: #e9ecef; border-radius: 4px; height: 22px; margin: 0 10px;">
+                                <div style="font-weight: bold; font-size: 1.05em; min-width: 200px; flex-shrink: 0;">▶ {main_item[:40]}</div>
+                                <div style="flex: 1; background: rgba(128,128,128,0.3); border-radius: 4px; height: 20px; margin: 0 10px; min-width: 100px;">
                                     <div style="width: {main_pct}%; background: {main_color}; height: 100%; border-radius: 4px;"></div>
                                 </div>
-                                <div style="width: 60px; text-align: right; font-weight: bold;">{main_pct:.0f}%</div>
+                                <div style="width: 50px; text-align: right; font-weight: bold;">{main_pct:.0f}%</div>
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
@@ -1916,29 +1916,29 @@ def main():
                                 sub_pct = sub_row['completion_pct'] if pd.notna(sub_row['completion_pct']) else 0
                                 sub_color = '#28a745' if sub_pct >= 70 else '#ffc107' if sub_pct >= 30 else '#dc3545'
                                 st.markdown(f"""
-                                <div style="display: flex; align-items: center; margin: 3px 0; padding-left: 30px;">
-                                    <div style="width: 220px; color: #666;">└ {sub_row['item'][:35]}</div>
-                                    <div style="flex: 1; background: #e9ecef; border-radius: 4px; height: 16px; margin: 0 10px;">
+                                <div style="display: flex; align-items: center; margin: 2px 0; padding-left: 40px; opacity: 0.9;">
+                                    <div style="min-width: 180px; flex-shrink: 0; font-size: 0.95em;">└ {sub_row['item'][:35]}</div>
+                                    <div style="flex: 1; background: rgba(128,128,128,0.2); border-radius: 4px; height: 14px; margin: 0 10px; min-width: 80px;">
                                         <div style="width: {sub_pct}%; background: {sub_color}; height: 100%; border-radius: 4px;"></div>
                                     </div>
-                                    <div style="width: 60px; text-align: right; color: #666;">{sub_pct:.0f}%</div>
+                                    <div style="width: 50px; text-align: right; font-size: 0.9em;">{sub_pct:.0f}%</div>
                                 </div>
                                 """, unsafe_allow_html=True)
 
                     # 處理沒有主項目的次項目（直接屬於區域的項目）
                     orphan_items = area_items[(area_items['main_item'] == '') & (area_items['is_main'] == False)]
                     if not orphan_items.empty:
-                        st.markdown("<div style='margin-top: 15px;'><strong>其他項目：</strong></div>", unsafe_allow_html=True)
+                        st.markdown("<div style='margin-top: 12px; padding-left: 12px; border-left: 4px solid #6c757d;'><strong>其他項目</strong></div>", unsafe_allow_html=True)
                         for _, item in orphan_items.iterrows():
                             pct = item['completion_pct'] if pd.notna(item['completion_pct']) else 0
                             color = '#28a745' if pct >= 70 else '#ffc107' if pct >= 30 else '#dc3545'
                             st.markdown(f"""
-                            <div style="display: flex; align-items: center; margin: 5px 0;">
-                                <div style="width: 200px;">{item['item'][:30]}</div>
-                                <div style="flex: 1; background: #e9ecef; border-radius: 4px; height: 20px; margin: 0 10px;">
+                            <div style="display: flex; align-items: center; margin: 2px 0; padding-left: 40px; opacity: 0.9;">
+                                <div style="min-width: 180px; flex-shrink: 0; font-size: 0.95em;">• {item['item'][:35]}</div>
+                                <div style="flex: 1; background: rgba(128,128,128,0.2); border-radius: 4px; height: 14px; margin: 0 10px; min-width: 80px;">
                                     <div style="width: {pct}%; background: {color}; height: 100%; border-radius: 4px;"></div>
                                 </div>
-                                <div style="width: 50px; text-align: right;">{pct:.0f}%</div>
+                                <div style="width: 50px; text-align: right; font-size: 0.9em;">{pct:.0f}%</div>
                             </div>
                             """, unsafe_allow_html=True)
     
@@ -2551,10 +2551,10 @@ def main():
 
                 if not area_tasks.empty:
                     # 可編輯的系統時程表格
-                    system_edit_columns = ['item', 'completion_pct', 'target_date', 'notes']
+                    system_edit_columns = ['item', 'completion_pct', 'target_date', 'hierarchy']
                     system_column_names = {
-                        'item': '區域', 'completion_pct': '完成百分比',
-                        'target_date': '目標日期', 'notes': '備註'
+                        'item': '項目', 'completion_pct': '完成百分比',
+                        'target_date': '目標日期', 'hierarchy': '階層'
                     }
 
                     # 準備編輯用的數據 - 確保數據類型正確
