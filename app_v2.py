@@ -482,9 +482,9 @@ def load_excel_data(uploaded_file):
 
                 # 解析進度統計欄位
                 # 欄位結構: 區域, 項目, C鋼(目標,實際), 軌道(目標,實際), HID(目標,實際),
-                #          踩點圖資(目標,實際), Area Sensor(目標,實際), 提速(目標,實際),
-                #          OHB安裝(目標,實際), OHB教點(目標,實際), OHB Cycle(目標,實際),
-                #          Cycle Test(目標,實際), EQ Teaching(目標,實際), Hot Run, RTD Test, Release
+                #          踩點圖資(目標,實際), Area Sensor(目標,實際), 走行提速(目標,實際),
+                #          OHB(安裝,實際,教點,實際,Cycle,實際), Cycle Test(目標,實際),
+                #          EQ Teaching(PIO安裝,教點), Hot Run, RTD Test, Release
                 for i in range(2, len(df_eng_raw)):  # 跳過標題列
                     row = df_eng_raw.iloc[i]
                     area = str(row[0]).strip() if pd.notna(row[0]) else ''
@@ -504,8 +504,8 @@ def load_excel_data(uploaded_file):
                             '踩點圖資_實際': safe_datetime(row[9]) if len(row) > 9 else None,
                             'AreaSensor_目標': safe_datetime(row[10]) if len(row) > 10 else None,
                             'AreaSensor_實際': safe_datetime(row[11]) if len(row) > 11 else None,
-                            '提速_目標': safe_datetime(row[12]) if len(row) > 12 else None,
-                            '提速_實際': safe_datetime(row[13]) if len(row) > 13 else None,
+                            '走行提速_目標': safe_datetime(row[12]) if len(row) > 12 else None,
+                            '走行提速_實際': safe_datetime(row[13]) if len(row) > 13 else None,
                             'OHB安裝_目標': safe_datetime(row[14]) if len(row) > 14 else None,
                             'OHB安裝_實際': safe_datetime(row[15]) if len(row) > 15 else None,
                             'OHB教點_目標': safe_datetime(row[16]) if len(row) > 16 else None,
@@ -514,8 +514,8 @@ def load_excel_data(uploaded_file):
                             'OHBCycle_實際': safe_datetime(row[19]) if len(row) > 19 else None,
                             'CycleTest_目標': safe_datetime(row[20]) if len(row) > 20 else None,
                             'CycleTest_實際': safe_datetime(row[21]) if len(row) > 21 else None,
-                            'EQTeaching_目標': safe_datetime(row[22]) if len(row) > 22 else None,
-                            'EQTeaching_實際': safe_datetime(row[23]) if len(row) > 23 else None,
+                            'EQTeaching_PIO安裝': safe_datetime(row[22]) if len(row) > 22 else None,
+                            'EQTeaching_教點': safe_datetime(row[23]) if len(row) > 23 else None,
                             'HotRun': safe_datetime(row[24]) if len(row) > 24 else None,
                             'RTDTest': safe_datetime(row[25]) if len(row) > 25 else None,
                             'Release': safe_datetime(row[26]) if len(row) > 26 else None,
@@ -1881,8 +1881,8 @@ def main():
         else:
             # 統計摘要卡片 - 第一排
             st.markdown("### 📊 各項目完成統計")
-            items_row1 = ['C鋼', '軌道', 'HID', '踩點圖資', 'AreaSensor', '提速']
-            items_row2 = ['OHB安裝', 'OHB教點', 'OHBCycle', 'CycleTest', 'EQTeaching']
+            items_row1 = ['C鋼', '軌道', 'HID', '踩點圖資', 'AreaSensor', '走行提速']
+            items_row2 = ['OHB安裝', 'OHB教點', 'OHBCycle', 'CycleTest']
 
             cols1 = st.columns(len(items_row1))
             for idx, item in enumerate(items_row1):
@@ -1895,7 +1895,7 @@ def main():
                     with cols1[idx]:
                         st.metric(item, f"{done}/{total}", f"{pct:.0f}%")
 
-            cols2 = st.columns(len(items_row2))
+            cols2 = st.columns(len(items_row2) + 1)  # +1 for EQ Teaching
             for idx, item in enumerate(items_row2):
                 target_col = f'{item}_目標'
                 actual_col = f'{item}_實際'
@@ -1905,6 +1905,15 @@ def main():
                     pct = (done / total * 100) if total > 0 else 0
                     with cols2[idx]:
                         st.metric(item, f"{done}/{total}", f"{pct:.0f}%")
+
+            # EQ Teaching 特殊處理 (PIO安裝, 教點)
+            with cols2[len(items_row2)]:
+                pio_col = 'EQTeaching_PIO安裝'
+                teach_col = 'EQTeaching_教點'
+                if pio_col in df_progress.columns:
+                    pio_done = df_progress[pio_col].notna().sum()
+                    teach_done = df_progress[teach_col].notna().sum() if teach_col in df_progress.columns else 0
+                    st.metric("EQ Teaching", f"PIO:{pio_done} 教點:{teach_done}")
 
             st.divider()
 
