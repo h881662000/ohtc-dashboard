@@ -440,6 +440,16 @@ def load_excel_data(uploaded_file):
         system_items = []
         current_area = ''
         current_main = ''
+
+        # 找到階層欄位的索引（通常在第3欄或標題行含「階層」）
+        hierarchy_col = 3  # 預設第4欄（索引3）
+        if len(df_system) > 0:
+            # 嘗試從標題行找到階層欄位
+            for idx, val in enumerate(df_system.iloc[0]):
+                if pd.notna(val) and '階層' in str(val):
+                    hierarchy_col = idx
+                    break
+
         for i in range(5, len(df_system)):
             row = df_system.iloc[i]
             item_name = str(row[0]).strip() if pd.notna(row[0]) else ''
@@ -450,28 +460,36 @@ def load_excel_data(uploaded_file):
                 if pct is not None and pct <= 1:
                     pct = pct * 100
 
+                # 從階層欄位讀取項目類型
+                hierarchy_value = str(row[hierarchy_col]).strip() if pd.notna(row[hierarchy_col]) else ''
+
                 # 判斷項目類型: area, main, sub
-                item_type = 'sub'
-                if '區域' in item_name:
+                if '區域' in hierarchy_value or '區域' in item_name:
                     item_type = 'area'
                     current_area = item_name
                     current_main = ''
-                elif item_name.startswith(' ') or item_name.startswith('　'):
-                    # 有縮排的是次項目
-                    item_type = 'sub'
-                else:
-                    # 沒有縮排且不是區域的是主項目
+                elif '主項目' in hierarchy_value:
                     item_type = 'main'
                     current_main = item_name
+                elif '次項目' in hierarchy_value:
+                    item_type = 'sub'
+                else:
+                    # 備用邏輯：如果階層欄位為空，根據名稱判斷
+                    if '區域' in item_name:
+                        item_type = 'area'
+                        current_area = item_name
+                        current_main = ''
+                    else:
+                        item_type = 'sub'
 
                 item = {
                     'area': current_area,
                     'main_item': current_main if item_type == 'sub' else ('' if item_type == 'area' else item_name),
                     'item': item_name.strip(),
                     'item_type': item_type,
+                    'hierarchy': hierarchy_value,
                     'target_date': safe_datetime(row[1]),
                     'completion_pct': pct,
-                    'notes': str(row[3]) if pd.notna(row[3]) else '',
                     'is_area': item_type == 'area',
                     'is_main': item_type == 'main',
                 }
