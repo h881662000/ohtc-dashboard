@@ -465,14 +465,14 @@ def load_excel_data(uploaded_file):
                 system_items.append(item)
         df_system_tasks = pd.DataFrame(system_items)
         
-        # 讀取進度統計（工程_工作進度確認表）
+        # 讀取進度統計（包含「工作進度」的工作表）
         df_engineering = pd.DataFrame()
         progress_stats = []
         try:
-            # 嘗試找到包含「工程」和「進度」的工作表
+            # 嘗試找到包含「工作進度」的工作表
             eng_sheet_name = None
             for sn in sheet_names:
-                if '工程' in sn and '進度' in sn:
+                if '工作進度' in sn:
                     eng_sheet_name = sn
                     break
 
@@ -482,9 +482,10 @@ def load_excel_data(uploaded_file):
 
                 # 解析進度統計欄位
                 # 欄位結構: 區域, 項目, C鋼(目標,實際), 軌道(目標,實際), HID(目標,實際),
-                #          圖資(目標,實際), OHB(目標,實際), Cycle Test(目標,實際),
-                #          EQ Teaching, Hot Run, RTD Test, Release
-                for i in range(3, len(df_eng_raw)):  # 跳過標題列
+                #          踩點圖資(目標,實際), Area Sensor(目標,實際), 提速(目標,實際),
+                #          OHB安裝(目標,實際), OHB教點(目標,實際), OHB Cycle(目標,實際),
+                #          Cycle Test(目標,實際), EQ Teaching(目標,實際), Hot Run, RTD Test, Release
+                for i in range(2, len(df_eng_raw)):  # 跳過標題列
                     row = df_eng_raw.iloc[i]
                     area = str(row[0]).strip() if pd.notna(row[0]) else ''
                     item = str(row[1]).strip() if pd.notna(row[1]) else ''
@@ -499,16 +500,25 @@ def load_excel_data(uploaded_file):
                             '軌道_實際': safe_datetime(row[5]) if len(row) > 5 else None,
                             'HID_目標': safe_datetime(row[6]) if len(row) > 6 else None,
                             'HID_實際': safe_datetime(row[7]) if len(row) > 7 else None,
-                            '圖資_目標': safe_datetime(row[8]) if len(row) > 8 else None,
-                            '圖資_實際': safe_datetime(row[9]) if len(row) > 9 else None,
-                            'OHB_目標': safe_datetime(row[10]) if len(row) > 10 else None,
-                            'OHB_實際': safe_datetime(row[11]) if len(row) > 11 else None,
-                            'CycleTest_目標': safe_datetime(row[12]) if len(row) > 12 else None,
-                            'CycleTest_實際': safe_datetime(row[13]) if len(row) > 13 else None,
-                            'EQ_Teaching': safe_datetime(row[14]) if len(row) > 14 else None,
-                            'Hot_Run': safe_datetime(row[15]) if len(row) > 15 else None,
-                            'RTD_Test': safe_datetime(row[16]) if len(row) > 16 else None,
-                            'Release': safe_datetime(row[17]) if len(row) > 17 else None,
+                            '踩點圖資_目標': safe_datetime(row[8]) if len(row) > 8 else None,
+                            '踩點圖資_實際': safe_datetime(row[9]) if len(row) > 9 else None,
+                            'AreaSensor_目標': safe_datetime(row[10]) if len(row) > 10 else None,
+                            'AreaSensor_實際': safe_datetime(row[11]) if len(row) > 11 else None,
+                            '提速_目標': safe_datetime(row[12]) if len(row) > 12 else None,
+                            '提速_實際': safe_datetime(row[13]) if len(row) > 13 else None,
+                            'OHB安裝_目標': safe_datetime(row[14]) if len(row) > 14 else None,
+                            'OHB安裝_實際': safe_datetime(row[15]) if len(row) > 15 else None,
+                            'OHB教點_目標': safe_datetime(row[16]) if len(row) > 16 else None,
+                            'OHB教點_實際': safe_datetime(row[17]) if len(row) > 17 else None,
+                            'OHBCycle_目標': safe_datetime(row[18]) if len(row) > 18 else None,
+                            'OHBCycle_實際': safe_datetime(row[19]) if len(row) > 19 else None,
+                            'CycleTest_目標': safe_datetime(row[20]) if len(row) > 20 else None,
+                            'CycleTest_實際': safe_datetime(row[21]) if len(row) > 21 else None,
+                            'EQTeaching_目標': safe_datetime(row[22]) if len(row) > 22 else None,
+                            'EQTeaching_實際': safe_datetime(row[23]) if len(row) > 23 else None,
+                            'HotRun': safe_datetime(row[24]) if len(row) > 24 else None,
+                            'RTDTest': safe_datetime(row[25]) if len(row) > 25 else None,
+                            'Release': safe_datetime(row[26]) if len(row) > 26 else None,
                         }
                         progress_stats.append(stat)
         except Exception as e:
@@ -1867,28 +1877,41 @@ def main():
         df_progress = data.get('progress_stats', pd.DataFrame())
 
         if df_progress.empty:
-            st.warning("⚠️ 未找到進度統計資料（需要「工程_工作進度確認表」工作表）")
+            st.warning("⚠️ 未找到進度統計資料（需要包含「工作進度」的工作表）")
         else:
-            # 統計摘要卡片
+            # 統計摘要卡片 - 第一排
             st.markdown("### 📊 各項目完成統計")
-            items = ['C鋼', '軌道', 'HID', '圖資', 'OHB', 'CycleTest']
-            cols = st.columns(len(items))
+            items_row1 = ['C鋼', '軌道', 'HID', '踩點圖資', 'AreaSensor', '提速']
+            items_row2 = ['OHB安裝', 'OHB教點', 'OHBCycle', 'CycleTest', 'EQTeaching']
 
-            for idx, item in enumerate(items):
+            cols1 = st.columns(len(items_row1))
+            for idx, item in enumerate(items_row1):
                 target_col = f'{item}_目標'
                 actual_col = f'{item}_實際'
                 if target_col in df_progress.columns and actual_col in df_progress.columns:
                     total = df_progress[target_col].notna().sum()
                     done = df_progress[actual_col].notna().sum()
                     pct = (done / total * 100) if total > 0 else 0
-                    with cols[idx]:
+                    with cols1[idx]:
+                        st.metric(item, f"{done}/{total}", f"{pct:.0f}%")
+
+            cols2 = st.columns(len(items_row2))
+            for idx, item in enumerate(items_row2):
+                target_col = f'{item}_目標'
+                actual_col = f'{item}_實際'
+                if target_col in df_progress.columns and actual_col in df_progress.columns:
+                    total = df_progress[target_col].notna().sum()
+                    done = df_progress[actual_col].notna().sum()
+                    pct = (done / total * 100) if total > 0 else 0
+                    with cols2[idx]:
                         st.metric(item, f"{done}/{total}", f"{pct:.0f}%")
 
             st.divider()
 
             # 進度條視覺化
             st.markdown("### 📈 各項目進度")
-            for item in items:
+            all_items = items_row1 + items_row2
+            for item in all_items:
                 target_col = f'{item}_目標'
                 actual_col = f'{item}_實際'
                 if target_col in df_progress.columns and actual_col in df_progress.columns:
@@ -1898,7 +1921,7 @@ def main():
                     color = '#28a745' if pct >= 70 else '#ffc107' if pct >= 30 else '#dc3545'
                     st.markdown(f"""
                     <div style="display: flex; align-items: center; margin: 10px 0;">
-                        <div style="width: 100px; font-weight: bold;">{item}</div>
+                        <div style="width: 120px; font-weight: bold;">{item}</div>
                         <div style="flex: 1; background: #e9ecef; border-radius: 4px; height: 25px; margin: 0 10px;">
                             <div style="width: {pct}%; background: {color}; height: 100%; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px;">
                                 {pct:.0f}%
@@ -1919,7 +1942,7 @@ def main():
                         with st.expander(f"📍 {area}"):
                             area_data = df_progress[df_progress['區域'] == area]
                             # 顯示該區域的項目
-                            display_cols = ['項目'] + [f'{item}_實際' for item in items if f'{item}_實際' in df_progress.columns]
+                            display_cols = ['項目'] + [f'{item}_實際' for item in all_items if f'{item}_實際' in df_progress.columns]
                             if display_cols:
                                 st.dataframe(area_data[display_cols], use_container_width=True, hide_index=True)
 
