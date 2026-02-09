@@ -1955,106 +1955,126 @@ def main():
             items_row2 = ['OHB安裝', 'OHB教點', 'OHBCycle', 'CycleTest']
             all_items = items_row1 + items_row2
 
-            # 檢查是否有區域欄位
-            if '區域' in df_progress.columns:
-                areas = [a for a in df_progress['區域'].unique() if a and str(a).strip()]
+            # 判斷區域欄位（可能是「區域」或「項目」）
+            area_col = None
+            if '項目' in df_progress.columns:
+                # 檢查「項目」欄位是否包含區域標識（如 A, B, C...）
+                sample_values = df_progress['項目'].dropna().head(10).astype(str).tolist()
+                if any(len(v) <= 2 for v in sample_values):  # 短名稱可能是區域
+                    area_col = '項目'
+            if area_col is None and '區域' in df_progress.columns:
+                area_col = '區域'
 
-                # 按區域分開統計
-                st.markdown("### 📊 各區域完成統計")
+            # 按區域/項目分開統計
+            st.markdown("### 📊 各區域完成統計")
+
+            if area_col:
+                # 取得所有區域（包括數字0）
+                areas = df_progress[area_col].dropna().unique()
+                areas = sorted([a for a in areas if str(a).strip()], key=lambda x: str(x))
 
                 for area in areas:
-                    area_data = df_progress[df_progress['區域'] == area]
-                    area_count = len(area_data)
+                    area_data = df_progress[df_progress[area_col] == area]
+                    if area_data.empty:
+                        continue
 
-                    with st.expander(f"📍 {area} ({area_count} 項)", expanded=True):
-                        # 第一排統計
-                        cols1 = st.columns(len(items_row1))
-                        for idx, item in enumerate(items_row1):
-                            target_col = f'{item}_目標'
-                            actual_col = f'{item}_實際'
-                            if target_col in df_progress.columns and actual_col in df_progress.columns:
-                                total = area_data[target_col].notna().sum()
-                                done = area_data[actual_col].notna().sum()
-                                pct = (done / total * 100) if total > 0 else 0
-                                delta_color = "normal" if pct >= 50 else "inverse"
-                                with cols1[idx]:
-                                    st.metric(item, f"{done}/{total}", f"{pct:.0f}%", delta_color=delta_color if pct < 50 else "off")
+                    # 計算該區域完成項目數
+                    completed_count = 0
+                    total_count = 0
+                    for item in all_items:
+                        target_col = f'{item}_目標'
+                        actual_col = f'{item}_實際'
+                        if target_col in df_progress.columns and actual_col in df_progress.columns:
+                            if area_data[target_col].notna().any():
+                                total_count += 1
+                                if area_data[actual_col].notna().any():
+                                    completed_count += 1
 
-                        # 第二排統計
-                        cols2 = st.columns(len(items_row2) + 1)
-                        for idx, item in enumerate(items_row2):
-                            target_col = f'{item}_目標'
-                            actual_col = f'{item}_實際'
-                            if target_col in df_progress.columns and actual_col in df_progress.columns:
-                                total = area_data[target_col].notna().sum()
-                                done = area_data[actual_col].notna().sum()
-                                pct = (done / total * 100) if total > 0 else 0
-                                with cols2[idx]:
-                                    st.metric(item, f"{done}/{total}", f"{pct:.0f}%")
+                    area_pct = (completed_count / total_count * 100) if total_count > 0 else 0
+                    area_color = '#28a745' if area_pct >= 70 else '#ffc107' if area_pct >= 30 else '#dc3545'
 
-                        # EQ Teaching 特殊處理
-                        with cols2[len(items_row2)]:
-                            pio_col = 'EQTeaching_PIO安裝'
-                            teach_col = 'EQTeaching_教點'
-                            if pio_col in df_progress.columns:
-                                pio_done = area_data[pio_col].notna().sum()
-                                teach_done = area_data[teach_col].notna().sum() if teach_col in df_progress.columns else 0
-                                st.metric("EQ Teaching", f"PIO:{pio_done} 教點:{teach_done}")
+                    with st.expander(f"📍 區域 {area} — 完成 {completed_count}/{total_count} 項 ({area_pct:.0f}%)", expanded=False):
+                        # 顯示各工程項目狀態
+                        st.markdown("**工程項目完成狀態：**")
 
-                        # 區域內進度條
-                        st.markdown("**進度條：**")
+                        # 建立狀態顯示
                         for item in all_items:
                             target_col = f'{item}_目標'
                             actual_col = f'{item}_實際'
-                            if target_col in df_progress.columns and actual_col in df_progress.columns:
-                                total = area_data[target_col].notna().sum()
-                                done = area_data[actual_col].notna().sum()
-                                pct = (done / total * 100) if total > 0 else 0
-                                color = '#28a745' if pct >= 70 else '#ffc107' if pct >= 30 else '#dc3545'
+                            if target_col in df_progress.columns:
+                                target_date = area_data[target_col].iloc[0] if not area_data[target_col].isna().all() else None
+                                actual_date = area_data[actual_col].iloc[0] if actual_col in df_progress.columns and not area_data[actual_col].isna().all() else None
+
+                                if pd.notna(target_date):
+                                    if pd.notna(actual_date):
+                                        status = "✅"
+                                        status_text = f"已完成 ({pd.to_datetime(actual_date).strftime('%m/%d') if pd.notna(actual_date) else ''})"
+                                        color = '#28a745'
+                                    else:
+                                        status = "⏳"
+                                        status_text = f"目標 {pd.to_datetime(target_date).strftime('%m/%d') if pd.notna(target_date) else ''}"
+                                        color = '#ffc107'
+                                else:
+                                    status = "—"
+                                    status_text = "未排程"
+                                    color = '#6c757d'
+
                                 st.markdown(f"""
-                                <div style="display: flex; align-items: center; margin: 5px 0;">
-                                    <div style="width: 100px; font-size: 0.9em;">{item}</div>
-                                    <div style="flex: 1; background: #e9ecef; border-radius: 4px; height: 18px; margin: 0 10px;">
-                                        <div style="width: {pct}%; background: {color}; height: 100%; border-radius: 4px;"></div>
-                                    </div>
-                                    <div style="width: 70px; text-align: right; font-size: 0.9em;">{done}/{total} ({pct:.0f}%)</div>
+                                <div style="display: flex; align-items: center; margin: 4px 0; padding: 4px 8px; border-left: 3px solid {color};">
+                                    <div style="width: 30px; font-size: 1.1em;">{status}</div>
+                                    <div style="width: 100px; font-weight: 500;">{item}</div>
+                                    <div style="flex: 1; font-size: 0.9em; opacity: 0.8;">{status_text}</div>
                                 </div>
                                 """, unsafe_allow_html=True)
 
-                        # 區域明細表格
-                        st.markdown("**項目明細：**")
-                        display_cols = ['項目'] + [f'{item}_實際' for item in all_items if f'{item}_實際' in df_progress.columns]
-                        if display_cols:
-                            st.dataframe(area_data[display_cols], use_container_width=True, hide_index=True)
+            st.divider()
 
-                st.divider()
+            # 全區域總計
+            st.markdown("### 📈 全區域總計")
 
-                # 全部區域總計
-                st.markdown("### 📈 全區域總計")
-                total_cols = st.columns(len(all_items))
-                for idx, item in enumerate(all_items):
-                    target_col = f'{item}_目標'
-                    actual_col = f'{item}_實際'
-                    if target_col in df_progress.columns and actual_col in df_progress.columns:
-                        total = df_progress[target_col].notna().sum()
-                        done = df_progress[actual_col].notna().sum()
-                        pct = (done / total * 100) if total > 0 else 0
-                        with total_cols[idx]:
-                            st.metric(item, f"{done}/{total}", f"{pct:.0f}%")
+            # 第一排
+            cols1 = st.columns(len(items_row1))
+            for idx, item in enumerate(items_row1):
+                target_col = f'{item}_目標'
+                actual_col = f'{item}_實際'
+                if target_col in df_progress.columns and actual_col in df_progress.columns:
+                    total = df_progress[target_col].notna().sum()
+                    done = df_progress[actual_col].notna().sum()
+                    pct = (done / total * 100) if total > 0 else 0
+                    with cols1[idx]:
+                        st.metric(item, f"{done}/{total}", f"{pct:.0f}%")
 
-            else:
-                # 沒有區域欄位時的備用顯示
-                st.markdown("### 📊 各項目完成統計")
-                cols1 = st.columns(len(items_row1))
-                for idx, item in enumerate(items_row1):
-                    target_col = f'{item}_目標'
-                    actual_col = f'{item}_實際'
-                    if target_col in df_progress.columns and actual_col in df_progress.columns:
-                        total = df_progress[target_col].notna().sum()
-                        done = df_progress[actual_col].notna().sum()
-                        pct = (done / total * 100) if total > 0 else 0
-                        with cols1[idx]:
-                            st.metric(item, f"{done}/{total}", f"{pct:.0f}%")
+            # 第二排
+            cols2 = st.columns(len(items_row2))
+            for idx, item in enumerate(items_row2):
+                target_col = f'{item}_目標'
+                actual_col = f'{item}_實際'
+                if target_col in df_progress.columns and actual_col in df_progress.columns:
+                    total = df_progress[target_col].notna().sum()
+                    done = df_progress[actual_col].notna().sum()
+                    pct = (done / total * 100) if total > 0 else 0
+                    with cols2[idx]:
+                        st.metric(item, f"{done}/{total}", f"{pct:.0f}%")
+
+            # 全區域進度條
+            st.markdown("**各項進度：**")
+            for item in all_items:
+                target_col = f'{item}_目標'
+                actual_col = f'{item}_實際'
+                if target_col in df_progress.columns and actual_col in df_progress.columns:
+                    total = df_progress[target_col].notna().sum()
+                    done = df_progress[actual_col].notna().sum()
+                    pct = (done / total * 100) if total > 0 else 0
+                    color = '#28a745' if pct >= 70 else '#ffc107' if pct >= 30 else '#dc3545'
+                    st.markdown(f"""
+                    <div style="display: flex; align-items: center; margin: 5px 0;">
+                        <div style="width: 100px; font-size: 0.9em;">{item}</div>
+                        <div style="flex: 1; background: rgba(128,128,128,0.3); border-radius: 4px; height: 18px; margin: 0 10px;">
+                            <div style="width: {pct}%; background: {color}; height: 100%; border-radius: 4px;"></div>
+                        </div>
+                        <div style="width: 80px; text-align: right; font-size: 0.9em;">{done}/{total} ({pct:.0f}%)</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
             st.divider()
 
