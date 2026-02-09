@@ -439,28 +439,41 @@ def load_excel_data(uploaded_file):
             df_system = pd.DataFrame()
         system_items = []
         current_area = ''
+        current_main = ''
         for i in range(5, len(df_system)):
             row = df_system.iloc[i]
             item_name = str(row[0]).strip() if pd.notna(row[0]) else ''
 
             if item_name:
-                # 檢查是否為區域標題
-                if '區域' in item_name:
-                    current_area = item_name
-
                 # 讀取完成百分比（自動判斷 0-1 或 0-100 格式）
                 pct = safe_float(row[2])
                 if pct is not None and pct <= 1:
-                    # Excel 儲存為 0-1 格式，轉換為 0-100
                     pct = pct * 100
+
+                # 判斷項目類型: area, main, sub
+                item_type = 'sub'
+                if '區域' in item_name:
+                    item_type = 'area'
+                    current_area = item_name
+                    current_main = ''
+                elif item_name.startswith(' ') or item_name.startswith('　'):
+                    # 有縮排的是次項目
+                    item_type = 'sub'
+                else:
+                    # 沒有縮排且不是區域的是主項目
+                    item_type = 'main'
+                    current_main = item_name
 
                 item = {
                     'area': current_area,
-                    'item': item_name,
-                    'target_date': safe_datetime(row[1]),  # 使用 safe_datetime 確保日期類型正確
+                    'main_item': current_main if item_type == 'sub' else ('' if item_type == 'area' else item_name),
+                    'item': item_name.strip(),
+                    'item_type': item_type,
+                    'target_date': safe_datetime(row[1]),
                     'completion_pct': pct,
                     'notes': str(row[3]) if pd.notna(row[3]) else '',
-                    'is_area': '區域' in item_name,
+                    'is_area': item_type == 'area',
+                    'is_main': item_type == 'main',
                 }
                 system_items.append(item)
         df_system_tasks = pd.DataFrame(system_items)
@@ -1843,32 +1856,73 @@ def main():
     # Tab 4: 區域進度
     with tab4:
         st.subheader("🏭 系統時程 - 區域進度")
-        
+
         area_fig = create_area_progress(df_system)
         if area_fig:
             st.plotly_chart(area_fig, use_container_width=True)
-        
+
         st.divider()
-        
-        # 各區域詳細進度
+
+        # 各區域詳細進度（主項目/次項目分開顯示）
         areas = df_system[df_system['is_area'] == True]['item'].unique()
-        
+
         for area in areas:
             with st.expander(f"📍 {area}"):
                 area_items = df_system[(df_system['area'] == area) & (df_system['is_area'] == False)]
                 if not area_items.empty:
-                    for _, item in area_items.iterrows():
-                        pct = item['completion_pct']
-                        color = '#28a745' if pct >= 0.7 else '#ffc107' if pct >= 0.3 else '#dc3545'
+                    # 取得該區域的主項目
+                    main_items = area_items[area_items['is_main'] == True]['item'].unique()
+
+                    for main_item in main_items:
+                        # 主項目標題
+                        main_row = area_items[area_items['item'] == main_item].iloc[0]
+                        main_pct = main_row['completion_pct'] if pd.notna(main_row['completion_pct']) else 0
+                        main_color = '#28a745' if main_pct >= 70 else '#ffc107' if main_pct >= 30 else '#dc3545'
+
                         st.markdown(f"""
-                        <div style="display: flex; align-items: center; margin: 5px 0;">
-                            <div style="width: 200px;">{item['item'][:30]}</div>
-                            <div style="flex: 1; background: #e9ecef; border-radius: 4px; height: 20px; margin: 0 10px;">
-                                <div style="width: {pct*100}%; background: {color}; height: 100%; border-radius: 4px;"></div>
+                        <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; margin: 10px 0 5px 0; border-left: 4px solid {main_color};">
+                            <div style="display: flex; align-items: center;">
+                                <div style="font-weight: bold; font-size: 1.1em; width: 250px;">📌 {main_item[:40]}</div>
+                                <div style="flex: 1; background: #e9ecef; border-radius: 4px; height: 22px; margin: 0 10px;">
+                                    <div style="width: {main_pct}%; background: {main_color}; height: 100%; border-radius: 4px;"></div>
+                                </div>
+                                <div style="width: 60px; text-align: right; font-weight: bold;">{main_pct:.0f}%</div>
                             </div>
-                            <div style="width: 50px; text-align: right;">{pct*100:.0f}%</div>
                         </div>
                         """, unsafe_allow_html=True)
+
+                        # 該主項目下的次項目
+                        sub_items = area_items[(area_items['main_item'] == main_item) & (area_items['is_main'] == False)]
+                        if not sub_items.empty:
+                            for _, sub_row in sub_items.iterrows():
+                                sub_pct = sub_row['completion_pct'] if pd.notna(sub_row['completion_pct']) else 0
+                                sub_color = '#28a745' if sub_pct >= 70 else '#ffc107' if sub_pct >= 30 else '#dc3545'
+                                st.markdown(f"""
+                                <div style="display: flex; align-items: center; margin: 3px 0; padding-left: 30px;">
+                                    <div style="width: 220px; color: #666;">└ {sub_row['item'][:35]}</div>
+                                    <div style="flex: 1; background: #e9ecef; border-radius: 4px; height: 16px; margin: 0 10px;">
+                                        <div style="width: {sub_pct}%; background: {sub_color}; height: 100%; border-radius: 4px;"></div>
+                                    </div>
+                                    <div style="width: 60px; text-align: right; color: #666;">{sub_pct:.0f}%</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+
+                    # 處理沒有主項目的次項目（直接屬於區域的項目）
+                    orphan_items = area_items[(area_items['main_item'] == '') & (area_items['is_main'] == False)]
+                    if not orphan_items.empty:
+                        st.markdown("<div style='margin-top: 15px;'><strong>其他項目：</strong></div>", unsafe_allow_html=True)
+                        for _, item in orphan_items.iterrows():
+                            pct = item['completion_pct'] if pd.notna(item['completion_pct']) else 0
+                            color = '#28a745' if pct >= 70 else '#ffc107' if pct >= 30 else '#dc3545'
+                            st.markdown(f"""
+                            <div style="display: flex; align-items: center; margin: 5px 0;">
+                                <div style="width: 200px;">{item['item'][:30]}</div>
+                                <div style="flex: 1; background: #e9ecef; border-radius: 4px; height: 20px; margin: 0 10px;">
+                                    <div style="width: {pct}%; background: {color}; height: 100%; border-radius: 4px;"></div>
+                                </div>
+                                <div style="width: 50px; text-align: right;">{pct:.0f}%</div>
+                            </div>
+                            """, unsafe_allow_html=True)
     
     # Tab 5: 進度統計
     with tab5:
@@ -1879,81 +1933,110 @@ def main():
         if df_progress.empty:
             st.warning("⚠️ 未找到進度統計資料（需要包含「工作進度」的工作表）")
         else:
-            # 統計摘要卡片 - 第一排
-            st.markdown("### 📊 各項目完成統計")
             items_row1 = ['C鋼', '軌道', 'HID', '踩點圖資', 'AreaSensor', '走行提速']
             items_row2 = ['OHB安裝', 'OHB教點', 'OHBCycle', 'CycleTest']
-
-            cols1 = st.columns(len(items_row1))
-            for idx, item in enumerate(items_row1):
-                target_col = f'{item}_目標'
-                actual_col = f'{item}_實際'
-                if target_col in df_progress.columns and actual_col in df_progress.columns:
-                    total = df_progress[target_col].notna().sum()
-                    done = df_progress[actual_col].notna().sum()
-                    pct = (done / total * 100) if total > 0 else 0
-                    with cols1[idx]:
-                        st.metric(item, f"{done}/{total}", f"{pct:.0f}%")
-
-            cols2 = st.columns(len(items_row2) + 1)  # +1 for EQ Teaching
-            for idx, item in enumerate(items_row2):
-                target_col = f'{item}_目標'
-                actual_col = f'{item}_實際'
-                if target_col in df_progress.columns and actual_col in df_progress.columns:
-                    total = df_progress[target_col].notna().sum()
-                    done = df_progress[actual_col].notna().sum()
-                    pct = (done / total * 100) if total > 0 else 0
-                    with cols2[idx]:
-                        st.metric(item, f"{done}/{total}", f"{pct:.0f}%")
-
-            # EQ Teaching 特殊處理 (PIO安裝, 教點)
-            with cols2[len(items_row2)]:
-                pio_col = 'EQTeaching_PIO安裝'
-                teach_col = 'EQTeaching_教點'
-                if pio_col in df_progress.columns:
-                    pio_done = df_progress[pio_col].notna().sum()
-                    teach_done = df_progress[teach_col].notna().sum() if teach_col in df_progress.columns else 0
-                    st.metric("EQ Teaching", f"PIO:{pio_done} 教點:{teach_done}")
-
-            st.divider()
-
-            # 進度條視覺化
-            st.markdown("### 📈 各項目進度")
             all_items = items_row1 + items_row2
-            for item in all_items:
-                target_col = f'{item}_目標'
-                actual_col = f'{item}_實際'
-                if target_col in df_progress.columns and actual_col in df_progress.columns:
-                    total = df_progress[target_col].notna().sum()
-                    done = df_progress[actual_col].notna().sum()
-                    pct = (done / total * 100) if total > 0 else 0
-                    color = '#28a745' if pct >= 70 else '#ffc107' if pct >= 30 else '#dc3545'
-                    st.markdown(f"""
-                    <div style="display: flex; align-items: center; margin: 10px 0;">
-                        <div style="width: 120px; font-weight: bold;">{item}</div>
-                        <div style="flex: 1; background: #e9ecef; border-radius: 4px; height: 25px; margin: 0 10px;">
-                            <div style="width: {pct}%; background: {color}; height: 100%; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px;">
-                                {pct:.0f}%
-                            </div>
-                        </div>
-                        <div style="width: 60px; text-align: right;">{done}/{total}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
 
-            st.divider()
-
-            # 按區域顯示詳細資料
-            st.markdown("### 📍 各區域進度明細")
+            # 檢查是否有區域欄位
             if '區域' in df_progress.columns:
-                areas = df_progress['區域'].unique()
+                areas = [a for a in df_progress['區域'].unique() if a and str(a).strip()]
+
+                # 按區域分開統計
+                st.markdown("### 📊 各區域完成統計")
+
                 for area in areas:
-                    if area and str(area).strip():
-                        with st.expander(f"📍 {area}"):
-                            area_data = df_progress[df_progress['區域'] == area]
-                            # 顯示該區域的項目
-                            display_cols = ['項目'] + [f'{item}_實際' for item in all_items if f'{item}_實際' in df_progress.columns]
-                            if display_cols:
-                                st.dataframe(area_data[display_cols], use_container_width=True, hide_index=True)
+                    area_data = df_progress[df_progress['區域'] == area]
+                    area_count = len(area_data)
+
+                    with st.expander(f"📍 {area} ({area_count} 項)", expanded=True):
+                        # 第一排統計
+                        cols1 = st.columns(len(items_row1))
+                        for idx, item in enumerate(items_row1):
+                            target_col = f'{item}_目標'
+                            actual_col = f'{item}_實際'
+                            if target_col in df_progress.columns and actual_col in df_progress.columns:
+                                total = area_data[target_col].notna().sum()
+                                done = area_data[actual_col].notna().sum()
+                                pct = (done / total * 100) if total > 0 else 0
+                                delta_color = "normal" if pct >= 50 else "inverse"
+                                with cols1[idx]:
+                                    st.metric(item, f"{done}/{total}", f"{pct:.0f}%", delta_color=delta_color if pct < 50 else "off")
+
+                        # 第二排統計
+                        cols2 = st.columns(len(items_row2) + 1)
+                        for idx, item in enumerate(items_row2):
+                            target_col = f'{item}_目標'
+                            actual_col = f'{item}_實際'
+                            if target_col in df_progress.columns and actual_col in df_progress.columns:
+                                total = area_data[target_col].notna().sum()
+                                done = area_data[actual_col].notna().sum()
+                                pct = (done / total * 100) if total > 0 else 0
+                                with cols2[idx]:
+                                    st.metric(item, f"{done}/{total}", f"{pct:.0f}%")
+
+                        # EQ Teaching 特殊處理
+                        with cols2[len(items_row2)]:
+                            pio_col = 'EQTeaching_PIO安裝'
+                            teach_col = 'EQTeaching_教點'
+                            if pio_col in df_progress.columns:
+                                pio_done = area_data[pio_col].notna().sum()
+                                teach_done = area_data[teach_col].notna().sum() if teach_col in df_progress.columns else 0
+                                st.metric("EQ Teaching", f"PIO:{pio_done} 教點:{teach_done}")
+
+                        # 區域內進度條
+                        st.markdown("**進度條：**")
+                        for item in all_items:
+                            target_col = f'{item}_目標'
+                            actual_col = f'{item}_實際'
+                            if target_col in df_progress.columns and actual_col in df_progress.columns:
+                                total = area_data[target_col].notna().sum()
+                                done = area_data[actual_col].notna().sum()
+                                pct = (done / total * 100) if total > 0 else 0
+                                color = '#28a745' if pct >= 70 else '#ffc107' if pct >= 30 else '#dc3545'
+                                st.markdown(f"""
+                                <div style="display: flex; align-items: center; margin: 5px 0;">
+                                    <div style="width: 100px; font-size: 0.9em;">{item}</div>
+                                    <div style="flex: 1; background: #e9ecef; border-radius: 4px; height: 18px; margin: 0 10px;">
+                                        <div style="width: {pct}%; background: {color}; height: 100%; border-radius: 4px;"></div>
+                                    </div>
+                                    <div style="width: 70px; text-align: right; font-size: 0.9em;">{done}/{total} ({pct:.0f}%)</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+
+                        # 區域明細表格
+                        st.markdown("**項目明細：**")
+                        display_cols = ['項目'] + [f'{item}_實際' for item in all_items if f'{item}_實際' in df_progress.columns]
+                        if display_cols:
+                            st.dataframe(area_data[display_cols], use_container_width=True, hide_index=True)
+
+                st.divider()
+
+                # 全部區域總計
+                st.markdown("### 📈 全區域總計")
+                total_cols = st.columns(len(all_items))
+                for idx, item in enumerate(all_items):
+                    target_col = f'{item}_目標'
+                    actual_col = f'{item}_實際'
+                    if target_col in df_progress.columns and actual_col in df_progress.columns:
+                        total = df_progress[target_col].notna().sum()
+                        done = df_progress[actual_col].notna().sum()
+                        pct = (done / total * 100) if total > 0 else 0
+                        with total_cols[idx]:
+                            st.metric(item, f"{done}/{total}", f"{pct:.0f}%")
+
+            else:
+                # 沒有區域欄位時的備用顯示
+                st.markdown("### 📊 各項目完成統計")
+                cols1 = st.columns(len(items_row1))
+                for idx, item in enumerate(items_row1):
+                    target_col = f'{item}_目標'
+                    actual_col = f'{item}_實際'
+                    if target_col in df_progress.columns and actual_col in df_progress.columns:
+                        total = df_progress[target_col].notna().sum()
+                        done = df_progress[actual_col].notna().sum()
+                        pct = (done / total * 100) if total > 0 else 0
+                        with cols1[idx]:
+                            st.metric(item, f"{done}/{total}", f"{pct:.0f}%")
 
             st.divider()
 
