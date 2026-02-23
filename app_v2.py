@@ -516,40 +516,40 @@ def load_excel_data(uploaded_file):
                 #          踩點圖資(目標,實際), Area Sensor(目標,實際), 走行提速(目標,實際),
                 #          OHB(安裝,實際,教點,實際,Cycle,實際), Cycle Test(目標,實際),
                 #          EQ Teaching(PIO安裝,教點), Hot Run, RTD Test, Release
-                for i in range(2, len(df_eng_raw)):  # 跳過標題列
+                for i in range(3, len(df_eng_raw)):  # 跳過標題列（第0列空白、第1列主標題、第2列子標題）
                     row = df_eng_raw.iloc[i]
-                    area = str(row[0]).strip() if pd.notna(row[0]) else ''
-                    item = str(row[1]).strip() if pd.notna(row[1]) else ''
+                    area = str(row[1]).strip() if pd.notna(row[1]) else ''
+                    item = str(row[2]).strip() if pd.notna(row[2]) else ''
 
                     if area or item:
                         stat = {
                             '區域': area,
                             '項目': item,
-                            'C鋼_目標': safe_datetime(row[2]) if len(row) > 2 else None,
-                            'C鋼_實際': safe_datetime(row[3]) if len(row) > 3 else None,
-                            '軌道_目標': safe_datetime(row[4]) if len(row) > 4 else None,
-                            '軌道_實際': safe_datetime(row[5]) if len(row) > 5 else None,
-                            'HID_目標': safe_datetime(row[6]) if len(row) > 6 else None,
-                            'HID_實際': safe_datetime(row[7]) if len(row) > 7 else None,
-                            '踩點圖資_目標': safe_datetime(row[8]) if len(row) > 8 else None,
-                            '踩點圖資_實際': safe_datetime(row[9]) if len(row) > 9 else None,
-                            'AreaSensor_目標': safe_datetime(row[10]) if len(row) > 10 else None,
-                            'AreaSensor_實際': safe_datetime(row[11]) if len(row) > 11 else None,
-                            '走行提速_目標': safe_datetime(row[12]) if len(row) > 12 else None,
-                            '走行提速_實際': safe_datetime(row[13]) if len(row) > 13 else None,
-                            'OHB安裝_目標': safe_datetime(row[14]) if len(row) > 14 else None,
-                            'OHB安裝_實際': safe_datetime(row[15]) if len(row) > 15 else None,
-                            'OHB教點_目標': safe_datetime(row[16]) if len(row) > 16 else None,
-                            'OHB教點_實際': safe_datetime(row[17]) if len(row) > 17 else None,
-                            'OHBCycle_目標': safe_datetime(row[18]) if len(row) > 18 else None,
-                            'OHBCycle_實際': safe_datetime(row[19]) if len(row) > 19 else None,
-                            'CycleTest_目標': safe_datetime(row[20]) if len(row) > 20 else None,
-                            'CycleTest_實際': safe_datetime(row[21]) if len(row) > 21 else None,
-                            'EQTeaching_PIO安裝': safe_datetime(row[22]) if len(row) > 22 else None,
-                            'EQTeaching_教點': safe_datetime(row[23]) if len(row) > 23 else None,
-                            'HotRun': safe_datetime(row[24]) if len(row) > 24 else None,
-                            'RTDTest': safe_datetime(row[25]) if len(row) > 25 else None,
-                            'Release': safe_datetime(row[26]) if len(row) > 26 else None,
+                            'C鋼_目標': safe_datetime(row[3]) if len(row) > 3 else None,
+                            'C鋼_實際': safe_datetime(row[4]) if len(row) > 4 else None,
+                            '軌道_目標': safe_datetime(row[5]) if len(row) > 5 else None,
+                            '軌道_實際': safe_datetime(row[6]) if len(row) > 6 else None,
+                            'HID_目標': safe_datetime(row[7]) if len(row) > 7 else None,
+                            'HID_實際': safe_datetime(row[8]) if len(row) > 8 else None,
+                            '踩點圖資_目標': safe_datetime(row[9]) if len(row) > 9 else None,
+                            '踩點圖資_實際': safe_datetime(row[10]) if len(row) > 10 else None,
+                            'AreaSensor_目標': safe_datetime(row[11]) if len(row) > 11 else None,
+                            'AreaSensor_實際': safe_datetime(row[12]) if len(row) > 12 else None,
+                            '走行提速_目標': safe_datetime(row[13]) if len(row) > 13 else None,
+                            '走行提速_實際': safe_datetime(row[14]) if len(row) > 14 else None,
+                            'OHB安裝_目標': safe_datetime(row[15]) if len(row) > 15 else None,
+                            'OHB安裝_實際': safe_datetime(row[16]) if len(row) > 16 else None,
+                            'OHB教點_目標': safe_datetime(row[17]) if len(row) > 17 else None,
+                            'OHB教點_實際': safe_datetime(row[18]) if len(row) > 18 else None,
+                            'OHBCycle_目標': safe_datetime(row[19]) if len(row) > 19 else None,
+                            'OHBCycle_實際': safe_datetime(row[20]) if len(row) > 20 else None,
+                            'CycleTest_目標': safe_datetime(row[21]) if len(row) > 21 else None,
+                            'CycleTest_實際': safe_datetime(row[22]) if len(row) > 22 else None,
+                            'EQTeaching_PIO安裝': safe_datetime(row[23]) if len(row) > 23 else None,
+                            'EQTeaching_教點': safe_datetime(row[24]) if len(row) > 24 else None,
+                            'HotRun': safe_datetime(row[25]) if len(row) > 25 else None,
+                            'RTDTest': safe_datetime(row[26]) if len(row) > 26 else None,
+                            'Release': safe_datetime(row[27]) if len(row) > 27 else None,
                         }
                         progress_stats.append(stat)
         except Exception as e:
